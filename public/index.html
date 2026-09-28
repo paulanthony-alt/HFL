@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HFL">
+  <title>HFL</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <a href="#/" class="brand"><span class="logo">HFL</span><span class="crew" id="crew-name"></span></a>
+    <div class="top-right">
+      <span class="live-dot" id="live-dot" title="Live sync"></span>
+      <a href="#/me" class="me-pill" id="me-pill">Who are you?</a>
+      <a href="#/settings" class="icon-btn" aria-label="Settings">⚙️</a>
+    </div>
+  </header>
+  <main id="view" class="view"><div class="loading">Loading the HFL…</div></main>
+  <nav class="tabs" id="tabs">
+    <a href="#/" data-tab="game"><span>🏈</span>Game</a>
+    <a href="#/stats" data-tab="stats"><span>📊</span>Stats</a>
+    <a href="#/cards" data-tab="cards"><span>🃏</span>Cards</a>
+    <a href="#/plays" data-tab="plays"><span>📋</span>Plays</a>
+    <a href="#/wall" data-tab="wall"><span>🗣️</span>Wall</a>
+    <a href="#/fame" data-tab="fame"><span>🏛️</span>Fame</a>
+  </nav>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

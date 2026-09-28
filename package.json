@@ -1,0 +1,13 @@
+{
+  "name": "hfl",
+  "version": "1.0.0",
+  "description": "The HFL — pickup football league app: RSVPs, balanced teams, live stat tracking, leaderboards, player cards, playbook, trash talk and the Hall of Fame.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  }
+}

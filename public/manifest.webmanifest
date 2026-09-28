@@ -1,0 +1,10 @@
+{
+  "name": "HFL",
+  "short_name": "HFL",
+  "description": "Pickup football league: RSVPs, fair teams, live stats and trash talk.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

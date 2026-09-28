@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0b0b0d"/>
+  <g transform="rotate(-30 256 256)">
+    <ellipse cx="256" cy="256" rx="190" ry="112" fill="#ff6b1a"/>
+    <path d="M150 256h212" stroke="#0b0b0d" stroke-width="14" stroke-linecap="round"/>
+    <path d="M196 232v48M236 232v48M276 232v48M316 232v48" stroke="#0b0b0d" stroke-width="12" stroke-linecap="round"/>
+  </g>
+  <text x="256" y="470" text-anchor="middle" font-family="Impact, 'Arial Black', sans-serif" font-size="96" letter-spacing="10" fill="#ffffff">HFL</text>
+</svg>
