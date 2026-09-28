@@ -173,7 +173,12 @@ test('rate players endpoint stores dated edits and moves the rating', async () =
 test('passcode set in the app locks everything, survives restart, and can be removed', async () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-apppass-'));
   const start = async () => { const s = await createHflServer({ dataDir: d, passcode: "" }); await new Promise((r) => s.listen(0, r)); return s; };
-  const stop = (s) => { s.closeAllConnections(); s.close(); };
+  // Restarting can hand out a port an earlier test used; wait for a full shutdown and
+  // retry once if a stale pooled connection gets dropped, so CI deploys never flake.
+  const stop = (s) => new Promise((r) => { s.closeAllConnections(); s.close(r); });
+  const fetch = async (...args) => {
+    try { return await globalThis.fetch(...args); } catch { return globalThis.fetch(...args); }
+  };
   let s = await start();
   let b = `http://localhost:${s.address().port}`;
   const post = (url, body, pass = '') => fetch(b + url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hfl-pass': pass }, body: JSON.stringify(body) });
@@ -185,13 +190,46 @@ test('passcode set in the app locks everything, survives restart, and can be rem
     assert.equal((await fetch(b + '/api/state', { headers: { 'x-hfl-pass': '6767' } })).status, 200);
     assert.ok(!fs.readFileSync(path.join(d, 'auth.json'), 'utf8').includes('6767'), 'only a hash is stored');
 
-    stop(s); s = await start(); b = `http://localhost:${s.address().port}`;
+    await stop(s); s = await start(); b = `http://localhost:${s.address().port}`;
     assert.equal((await fetch(b + '/api/state')).status, 401, 'still locked after restart');
     assert.equal((await post('/api/passcode', { passcode: '' }, 'wrong')).status, 401, 'need the code to change it');
     assert.equal((await post('/api/passcode', { passcode: '' }, '6767')).status, 200);
     assert.equal((await fetch(b + '/api/state')).status, 200, 'unlocked again');
   } finally {
-    stop(s);
+    await stop(s);
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('roster setup: keeps the crew, clears everyone else, runs only once', async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-roster-'));
+  const s = await createHflServer({ dataDir: d, passcode: '' });
+  await new Promise((r) => s.listen(0, r));
+  const b = `http://localhost:${s.address().port}`;
+  const post = async (url, body) => (await fetch(b + url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })).json();
+  try {
+    await post('/api/seed-demo');
+    const paul = await post('/api/players', { name: 'paul', nickname: 'Big P' }); // already here, odd casing
+    const first = await post('/api/setup-roster');
+    assert.equal(first.result.changed, true);
+    const { db } = first;
+    assert.deepEqual(db.players.map((p) => p.name), ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane'], 'names tidied to the roster spelling');
+    assert.equal(db.players.find((p) => p.name === 'Paul').id, paul.result.id, 'existing player kept with his stats and nickname');
+    assert.equal(db.players.find((p) => p.name === 'Paul').nickname, 'Big P');
+    assert.equal(db.games.length, 0, 'demo games gone');
+    assert.equal(db.posts.length, 0, 'demo posts gone');
+    assert.equal(db.plays.length, 0, 'demo plays gone');
+    assert.equal(db.fame.length, 0, 'demo hall of fame gone');
+    assert.equal(new Set(db.players.map((p) => p.color)).size, 11, 'everyone gets their own card color');
+
+    const newbie = await post('/api/players', { name: 'Cousin Joey' });
+    const again = await post('/api/setup-roster');
+    assert.equal(again.result.changed, false);
+    assert.ok(again.db.players.some((p) => p.id === newbie.result.id), 'players added later are never removed');
+    assert.equal(again.db.players.length, 12);
+  } finally {
+    s.closeAllConnections();
+    s.close();
     fs.rmSync(d, { recursive: true, force: true });
   }
 });

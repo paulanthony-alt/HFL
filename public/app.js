@@ -1,4 +1,5 @@
 import * as E from './engine.js';
+import { ROSTER_VERSION } from './league.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 
 // ---------------------------------------------------------------------------
@@ -173,6 +174,7 @@ const ROUTES = [
   [/^#\/fame$/, viewFame, 'fame'],
   [/^#\/fame\/new$/, viewFameNew, 'fame'],
   [/^#\/me$/, viewMe, ''],
+  [/^#\/nickname$/, viewNickname, ''],
   [/^#\/ratings$/, viewRatings, ''],
   [/^#\/settings$/, viewSettings, ''],
 ];
@@ -217,6 +219,16 @@ function hydrateImages() {
   document.querySelectorAll('img[data-fsimg]').forEach((img) => {
     S.backend.getImage(img.dataset.fsimg).then((src) => { if (src) img.src = src; }).catch(() => {});
   });
+}
+
+// One-time: make the league the HFL crew (see HFL_ROSTER in league.js).
+function ensureRoster() {
+  if ((S.db.settings.rosterVersion || 0) >= ROSTER_VERSION || ensureRoster.running) return;
+  ensureRoster.running = true;
+  api('POST', '/api/setup-roster')
+    .then((r) => { if (r?.changed) toast('🏈 The HFL roster is set. Tap “Who are you?” to pick yourself'); })
+    .catch(() => {})
+    .finally(() => { ensureRoster.running = false; });
 }
 
 function renderChrome(tab) {
@@ -821,6 +833,7 @@ function viewCard(id) {
     </section>
 
     ${fame.length ? `<section class="card"><h3>In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
+    ${id === me() ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>` : ''}
     <a class="btn ghost block" href="#/p/${id}/edit">✎ Edit player</a>`;
 }
 
@@ -853,12 +866,44 @@ function viewEditPlayer(id) {
     </section>`;
 }
 
+function nicknameForm(id, { welcome = false } = {}) {
+  const p = P(id);
+  return `
+    <form data-f="my-nickname" data-id="${id}" class="form">
+      <label>Your nickname <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span>
+        <input name="nickname" maxlength="24" value="${h(p.nickname || '')}" placeholder="e.g. Slingshot, Glue Hands, The Wall" autocomplete="off">
+      </label>
+      <p class="muted small">Shows on your player card, the scoreboard and the leaderboards. Leave it blank to go by ${h(p.name)}.</p>
+      <div class="btn-row">
+        ${welcome ? '<a class="btn ghost" href="#/">Skip</a>' : ''}
+        <button class="btn hot grow">Save nickname</button>
+      </div>
+    </form>`;
+}
+
+function viewNickname() {
+  const m = me();
+  if (!m) return viewMe();
+  return `
+    <section class="card">
+      <div class="kicker">Welcome to the HFL</div>
+      <h2>What's up, ${h(P(m).name)}</h2>
+      <p class="muted">Got a nickname? Totally optional. You can change it any time by tapping your name at the top.</p>
+      ${nicknameForm(m, { welcome: true })}
+    </section>`;
+}
+
 function viewMe() {
   const list = activePlayers();
   const m = me();
   return `
+    ${m ? `
+      <section class="card">
+        <div class="kicker">Signed in as ${h(P(m).name)}</div>
+        ${nicknameForm(m)}
+      </section>` : ''}
     <section class="card">
-      <h2>Who are you?</h2>
+      <h2>${m ? 'Not you?' : 'Who are you?'}</h2>
       <p class="muted">This phone will RSVP, vote and post as this player.</p>
       <div class="me-grid">${list.map((p) => `
         <button class="me-opt ${m === p.id ? 'on' : ''}" data-a="set-me" data-p="${p.id}">${avatar(p.id, 'lg')}<span>${h(p.name)}</span>${p.nickname ? `<small>“${h(p.nickname)}”</small>` : ''}</button>`).join('')}
@@ -1207,7 +1252,13 @@ async function setPasscode(code) {
 
 const A = {
   'seed-demo': () => run(() => api('POST', '/api/seed-demo'), 'Demo crew loaded 👀'),
-  'set-me': ({ p }) => { S.me = p; lsSet('hfl.me', p); toast(`What's up, ${nick(p)} 👊`); location.hash = '#/'; render(); },
+  'set-me': ({ p }) => {
+    S.me = p;
+    lsSet('hfl.me', p);
+    location.hash = P(p).nickname ? '#/' : '#/nickname'; // first time: offer a nickname
+    if (P(p).nickname) toast(`What's up, ${nick(p)} 👊`);
+    render();
+  },
   rsvp: ({ g, p, s }) => {
     const game = S.db.games.find((x) => x.id === g);
     run(() => api('POST', `/api/games/${g}/rsvp`, { playerId: p, status: game?.rsvps[p] === s ? null : s }));
@@ -1319,6 +1370,11 @@ const CHANGE = {
 };
 
 const FORMS = {
+  'my-nickname': async (d, form) => {
+    const nickname = d.nickname.trim();
+    const saved = await run(() => api('PATCH', `/api/players/${form.dataset.id}`, { nickname }), nickname ? `Nickname saved: “${nickname}” 🏈` : 'Nickname cleared');
+    if (saved && location.hash === '#/nickname') location.hash = '#/';
+  },
   ratings: (d, form) => {
     const ratings = {};
     form.querySelectorAll('input[data-ch=rate]').forEach((el) => {
@@ -1476,6 +1532,7 @@ async function bootFirebase() {
       window.addEventListener('hashchange', render);
     }
     render();
+    ensureRoster();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach Firebase', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
   }
@@ -1498,6 +1555,7 @@ async function boot() {
       window.addEventListener('hashchange', render);
     }
     render();
+    ensureRoster();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach the HFL server', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
   }

@@ -4,6 +4,12 @@ import { EVENT_TYPES, POSITIONS, computeLeague, balanceTeams, teamOf } from './e
 import { buildDemo } from './demo.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
+
+// The HFL crew. The first time the app opens a league without this roster
+// (settings.rosterVersion), it clears out everyone else and adds these guys.
+export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane'];
+export const ROSTER_VERSION = 1;
+const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0'];
 const FAME_CATEGORIES = ['best', 'dumb', 'drop'];
 const ROUTE_STYLES = ['route', 'motion', 'block'];
 
@@ -153,6 +159,45 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   });
 
   // --- players
+  // One-time roster setup. Removes every player who isn't on HFL_ROSTER, plus anything
+  // that only makes sense with them (their games, posts, plays, Hall of Fame entries),
+  // then adds whoever on the roster is missing. Safe to call repeatedly: once the
+  // roster version is recorded it does nothing, so players added later are never touched.
+  on('POST', '/api/setup-roster', (db, b, params, fx) => {
+    if ((db.settings.rosterVersion || 0) >= ROSTER_VERSION) return { changed: false };
+    const wanted = new Map(HFL_ROSTER.map((n) => [n.toLowerCase(), n]));
+    const keep = new Map(); // roster name → existing player (first one wins)
+    for (const p of db.players) {
+      const key = String(p.name || '').trim().toLowerCase();
+      if (wanted.has(key) && !keep.has(key)) keep.set(key, p);
+    }
+    const kept = new Set([...keep.values()].map((p) => p.id));
+    const removed = new Set(db.players.filter((p) => !kept.has(p.id)).map((p) => p.id));
+    const gone = (id) => id && removed.has(id);
+
+    db.players = HFL_ROSTER.map((name, i) => (keep.has(name.toLowerCase()) ? { ...keep.get(name.toLowerCase()), name } : {
+      id: newId(), name, nickname: '', number: '', position: 'ATH', startOvr: 70, emoji: '',
+      color: ROSTER_COLORS[i % ROSTER_COLORS.length], active: true, createdAt: now(),
+    }));
+    db.games = db.games.filter((g) => ![...g.teams.A, ...g.teams.B, ...Object.keys(g.rsvps)].some(gone)
+      && !g.events.some((e) => gone(e.p1) || gone(e.p2)));
+    for (const g of db.games) {
+      for (const id of Object.keys(g.mvpVotes)) if (gone(id) || gone(g.mvpVotes[id])) delete g.mvpVotes[id];
+    }
+    db.posts = db.posts.filter((p) => !gone(p.authorId));
+    for (const p of db.posts) for (const e of Object.keys(p.reactions)) p.reactions[e] = p.reactions[e].filter((id) => !gone(id));
+    db.plays = db.plays.filter((p) => !gone(p.authorId));
+    const gameIds = new Set(db.games.map((g) => g.id));
+    db.fame = db.fame.filter((f) => {
+      const drop = gone(f.authorId) || f.playerIds.some(gone) || (f.gameId && !gameIds.has(f.gameId));
+      if (drop && f.image) fx.images.push({ op: 'delete', file: f.image.split(/[/:]/).pop() });
+      return !drop;
+    });
+    for (const f of db.fame) f.votes = f.votes.filter((id) => !gone(id));
+    db.settings.rosterVersion = ROSTER_VERSION;
+    return { changed: true, removed: removed.size, added: HFL_ROSTER.length - keep.size };
+  });
+
   on('POST', '/api/players', (db, b) => {
     const p = cleanPlayer({ position: 'ATH', startOvr: 70, emoji: '', nickname: '', number: '', ...b });
     Object.assign(p, { id: newId(), active: true, createdAt: now(), color: color(b.color, '#ff6b1a') });
