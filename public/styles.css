@@ -544,7 +544,7 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
 .sb-date { font: 600 11.5px/1 var(--label); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 
 /* live logger */
-.log-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 6px; }
+.log-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 14px 0 6px; }
 .log-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
   min-height: 82px; padding: 10px 4px; border-radius: var(--r);
@@ -553,6 +553,10 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
   box-shadow: var(--shadow-1); transition: transform 0.12s var(--ease), border-color 0.2s, background 0.2s;
 }
 .log-btn span { font-size: 27px; line-height: 1; }
+@media (max-width: 559px) {
+  /* phones: wide two-column buttons, easy to hit mid-game */
+  .log-btn { flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 64px; padding: 10px 14px; font-size: 15.5px; }
+}
 .log-btn:hover { border-color: rgba(255, 255, 255, 0.2); }
 .log-btn:active { transform: scale(0.94); }
 .log-btn.score { border-color: rgba(255, 90, 31, 0.5); background: linear-gradient(180deg, rgba(255, 90, 31, 0.24), rgba(255, 90, 31, 0.04)); }

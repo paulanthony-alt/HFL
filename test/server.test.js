@@ -9,7 +9,7 @@ let server, base, dir;
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-test-'));
-  server = createHflServer({ dataDir: dir, passcode: '' });
+  server = await createHflServer({ dataDir: dir, passcode: '' });
   await new Promise((r) => server.listen(0, r));
   base = `http://localhost:${server.address().port}`;
 });
@@ -129,7 +129,7 @@ test('static files are served and path traversal is blocked', async () => {
 
 test('passcode locks the API', async () => {
   const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-pass-'));
-  const s2 = createHflServer({ dataDir: d2, passcode: 'blitz' });
+  const s2 = await createHflServer({ dataDir: d2, passcode: 'blitz' });
   await new Promise((r) => s2.listen(0, r));
   const b2 = `http://localhost:${s2.address().port}`;
   try {
@@ -146,7 +146,7 @@ test('passcode locks the API', async () => {
 
 test('demo seed loads only into an empty league', async () => {
   const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-demo-'));
-  const s3 = createHflServer({ dataDir: d3 });
+  const s3 = await createHflServer({ dataDir: d3 });
   await new Promise((r) => s3.listen(0, r));
   const b3 = `http://localhost:${s3.address().port}`;
   try {
@@ -172,7 +172,7 @@ test('rate players endpoint stores dated edits and moves the rating', async () =
 
 test('passcode set in the app locks everything, survives restart, and can be removed', async () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-apppass-'));
-  const start = async () => { const s = createHflServer({ dataDir: d, passcode: '' }); await new Promise((r) => s.listen(0, r)); return s; };
+  const start = async () => { const s = await createHflServer({ dataDir: d, passcode: "" }); await new Promise((r) => s.listen(0, r)); return s; };
   const stop = (s) => { s.closeAllConnections(); s.close(); };
   let s = await start();
   let b = `http://localhost:${s.address().port}`;

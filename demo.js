@@ -63,7 +63,6 @@ export function buildDemo(newId, season) {
         else if (r < 0.8) { add(rand() < 0.2 ? 'pick_six' : 'int', pick(teams[def]), qb, def); break; }
         else if (r < 0.95) {
           if (rand() < 0.8) add('pass_td', qb, t, off); else add('rush_td', t, null, off);
-          add(rand() < 0.6 ? 'pat1' : 'pat2', t, null, off);
           break;
         }
       }

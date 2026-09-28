@@ -28,9 +28,6 @@ export const EVENT_TYPES = {
   int:        { label: 'INT',        emoji: '🦅', points: 0, roles: ['def', 'qb'],     prompts: ['Defender', 'QB who threw it'], side: 'other', required: false },
   pick_six:   { label: 'Pick Six',   emoji: '💰', points: 6, roles: ['def', 'qb'],     prompts: ['Defender', 'QB who threw it'], side: 'other', required: false },
   sack:       { label: 'Sack',       emoji: '💥', points: 0, roles: ['def', 'qb'],     prompts: ['Rusher', 'QB'],   side: 'other', required: false },
-  safety:     { label: 'Safety',     emoji: '🛡️', points: 2, roles: ['def', 'carrier'], prompts: ['Defender', 'Ball carrier'], side: 'other', required: false },
-  pat1:       { label: 'PAT +1',     emoji: '☝️', points: 1, roles: ['scorer'],        prompts: ['Scorer'] },
-  pat2:       { label: 'PAT +2',     emoji: '✌️', points: 2, roles: ['scorer'],        prompts: ['Scorer'] },
 };
 
 export function blankStats() {
@@ -39,8 +36,7 @@ export function blankStats() {
     att: 0, comp: 0, passTD: 0, intThrown: 0, sacked: 0,
     rec: 0, targets: 0, recTD: 0, drops: 0,
     rushTD: 0,
-    defInt: 0, defTD: 0, sacks: 0, safeties: 0,
-    patPts: 0,
+    defInt: 0, defTD: 0, sacks: 0,
   };
 }
 
@@ -69,7 +65,7 @@ export function qbRating(s) {
 export function impactOf(s) {
   return (
     totalTDs(s) * 6 + s.passTD * 4 + s.comp * 0.5 + s.rec * 1 + s.defInt * 5 + s.sacks * 3 +
-    s.safeties * 4 + s.patPts - s.intThrown * 4 - s.drops * 2 - s.sacked
+    -s.intThrown * 4 - s.drops * 2 - s.sacked
   );
 }
 
@@ -97,9 +93,7 @@ function applyEvent(statFor, ev) {
       break;
     }
     case 'sack': { s(r.def).sacks++; if (r.qb) s(r.qb).sacked++; break; }
-    case 'safety': { s(r.def).safeties++; break; }
     case 'rush_td': { s(r.runner).rushTD++; break; }
-    case 'pat1': case 'pat2': { s(r.scorer).patPts += EVENT_TYPES[ev.type].points; break; }
   }
 }
 

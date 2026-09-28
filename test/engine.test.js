@@ -27,14 +27,14 @@ test('qbRating: perfect game is 158.3, null with no attempts', () => {
 test('summarizeGame scores points to the right team and credits stats', () => {
   const g = game({
     events: [
-      ev('pass_td', 'qa', 'wa', 'A'), ev('pat1', 'wa', null, 'A'),
+      ev('pass_td', 'qa', 'wa', 'A'),
       ev('catch', 'qa', 'xa', 'A'), ev('drop', 'xa', 'qa', 'A'), ev('incomplete', 'qa', null, 'A'),
-      ev('pick_six', 'wb', 'qa', 'B'), ev('pat2', 'wb', null, 'B'),
+      ev('pick_six', 'wb', 'qa', 'B'),
       ev('sack', 'xa', 'qb', 'A'), ev('int', 'xa', 'qb', 'A'), ev('rush_td', 'xb', null, 'B'),
     ],
   });
   const s = E.summarizeGame(g);
-  assert.deepEqual(s.score, { A: 7, B: 14 });
+  assert.deepEqual(s.score, { A: 6, B: 12 });
   assert.equal(s.winner, 'B');
   const qa = s.stats.qa;
   assert.equal(qa.att, 5); // td, catch, drop, incomplete, pick six

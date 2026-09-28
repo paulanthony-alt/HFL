@@ -241,6 +241,7 @@ function scoreboard(g) {
 
 function describeEvent(ev) {
   const t = E.EVENT_TYPES[ev.type];
+  if (!t) return `<span class="ev-emoji">·</span> <b>Old play</b> <span class="ev-text">(no longer tracked)</span>`;
   const a = h(nick(ev.p1));
   const b = ev.p2 ? h(nick(ev.p2)) : '';
   const text = {
@@ -251,10 +252,7 @@ function describeEvent(ev) {
     int: b ? `${a} picks off ${b}` : a,
     pick_six: b ? `${a} takes ${b} to the house` : a,
     sack: b ? `${a} gets ${b}` : a,
-    safety: a,
     rush_td: a,
-    pat1: a,
-    pat2: a,
   }[ev.type] || a;
   return `<span class="ev-emoji">${t.emoji}</span> <b>${h(t.label)}</b> <span class="ev-text">${text}</span>`;
 }
@@ -267,7 +265,6 @@ function statLine(s) {
   if (s.rushTD) parts.push(`${s.rushTD} rush TD`);
   if (s.defInt) parts.push(`${s.defInt} INT${s.defTD ? ` (${s.defTD} pick-6)` : ''}`);
   if (s.sacks) parts.push(`${s.sacks} sack${s.sacks > 1 ? 's' : ''}`);
-  if (s.safeties) parts.push(`${s.safeties} safety`);
   if (s.drops) parts.push(`${s.drops} drop${s.drops > 1 ? 's' : ''} 🧈`);
   if (s.sacked) parts.push(`sacked ${s.sacked}×`);
   return parts.join(' · ') || '—';
@@ -667,8 +664,8 @@ function viewStats() {
     cols = [['Rec', (s) => s.rec], ['Tgt', (s) => s.targets], ['Ctch%', (s) => pct(s.rec / s.targets)], ['TD', (s) => s.recTD], ['🧈', (s) => s.drops]];
     note = '🧈 = drops. Everybody can see them. Forever.';
   } else if (tab === 'def') {
-    list = rows.filter((r) => r.s.defInt || r.s.sacks || r.s.safeties).sort((a, b) => (b.s.defInt * 5 + b.s.sacks * 3 + b.s.defTD * 6) - (a.s.defInt * 5 + a.s.sacks * 3 + a.s.defTD * 6));
-    cols = [['INT', (s) => s.defInt], ['Pick6', (s) => s.defTD], ['Sacks', (s) => s.sacks], ['Sfty', (s) => s.safeties]];
+    list = rows.filter((r) => r.s.defInt || r.s.sacks).sort((a, b) => (b.s.defInt * 5 + b.s.sacks * 3 + b.s.defTD * 6) - (a.s.defInt * 5 + a.s.sacks * 3 + a.s.defTD * 6));
+    cols = [['INT', (s) => s.defInt], ['Pick6', (s) => s.defTD], ['Sacks', (s) => s.sacks]];
   } else if (tab === 'ovr') {
     list = activePlayers().map((p) => ({ id: p.id, s: table[p.id] || E.blankStats() })).sort((a, b) => ovr(b.id) - ovr(a.id));
     cols = [['OVR', (s, id) => `<b>${ovr(id)}</b>`], ['Trend', (s, id) => {
@@ -1063,7 +1060,7 @@ function viewFameNew(query) {
     </section>`;
 }
 
-async function resizeImage(file, max = 1280) {
+async function resizeImage(file, max = 1200) {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
@@ -1071,7 +1068,10 @@ async function resizeImage(file, max = 1280) {
     const scale = Math.min(1, max / Math.max(img.width, img.height));
     const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * scale), height: Math.round(img.height * scale) });
     canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.82);
+    // Keep photos small enough for any storage backend (Firebase caps them at 700KB).
+    let quality = 0.82, url = canvas.toDataURL('image/jpeg', quality);
+    while (url.length * 0.75 > 600 * 1024 && quality > 0.35) url = canvas.toDataURL('image/jpeg', (quality -= 0.12));
+    return url;
   } finally {
     URL.revokeObjectURL(url);
   }

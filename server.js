@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { EVENT_TYPES, POSITIONS, computeLeague, balanceTeams, teamOf } from './public/engine.js';
 import { buildDemo } from './demo.js';
+import { fileStore, storeFromEnv } from './storage.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -18,7 +19,7 @@ const ROUTE_STYLES = ['route', 'motion', 'block'];
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.webp': 'image/webp',
 };
 
 class HttpError extends Error {
@@ -129,9 +130,10 @@ function checkTeams(db, teams) {
 // ---------------------------------------------------------------------------
 // Routes
 
-function buildRoutes(ctx) {
-  const { dataDir } = ctx;
-  const uploadsDir = path.join(dataDir, 'uploads');
+// Handlers are synchronous and work on a draft copy of the league. Anything that
+// touches storage goes in `fx`: fx.before runs before the change is committed
+// (a failure cancels it), fx.after runs once it is saved.
+function buildRoutes({ store }) {
   const routes = [];
   const on = (method, pattern, handler) => {
     const keys = [];
@@ -345,7 +347,7 @@ function buildRoutes(ctx) {
   });
 
   // --- hall of fame
-  on('POST', '/api/fame', (db, b) => {
+  on('POST', '/api/fame', (db, b, params, fx) => {
     const entry = {
       id: newId(),
       category: oneOf(b.category, FAME_CATEGORIES, 'category'),
@@ -361,11 +363,11 @@ function buildRoutes(ctx) {
       const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.image);
       if (!m) throw bad('photo must be a JPEG, PNG or WebP');
       const buf = Buffer.from(m[2], 'base64');
-      if (buf.length > 3 * 1024 * 1024) throw bad('photo is too big (3MB max)');
+      if (buf.length > store.maxImageBytes) throw bad(`photo is too big (${Math.round(store.maxImageBytes / 1024)}KB max)`);
       const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
-      fs.mkdirSync(uploadsDir, { recursive: true });
-      fs.writeFileSync(path.join(uploadsDir, `${entry.id}.${ext}`), buf);
-      entry.image = `/uploads/${entry.id}.${ext}`;
+      const file = `${entry.id}.${ext}`;
+      fx.before.push(() => store.putImage(file, buf, `image/${m[1]}`));
+      entry.image = `/uploads/${file}`;
     }
     db.fame.push(entry);
     return entry;
@@ -377,9 +379,9 @@ function buildRoutes(ctx) {
     if (i >= 0) entry.votes.splice(i, 1); else entry.votes.push(b.playerId);
     return entry;
   });
-  on('DELETE', '/api/fame/:id', (db, b, { id }) => {
+  on('DELETE', '/api/fame/:id', (db, b, { id }, fx) => {
     const entry = find(db.fame, id, 'entry');
-    if (entry.image) fs.rmSync(path.join(uploadsDir, path.basename(entry.image)), { force: true });
+    if (entry.image) fx.after.push(() => store.deleteImage(path.basename(entry.image)));
     db.fame = db.fame.filter((f) => f.id !== id);
   });
 
@@ -389,11 +391,10 @@ function buildRoutes(ctx) {
 // ---------------------------------------------------------------------------
 // Server
 
-// Crew passcode set from inside the app. Kept out of db.json (so backups never carry
-// it) and stored as a salted scrypt hash, never the passcode itself.
-function passcodeStore(dataDir) {
-  const file = path.join(dataDir, 'auth.json');
-  let saved = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+// Crew passcode set from inside the app. Kept out of the league data (so backups never
+// carry it) and stored as a salted scrypt hash, never the passcode itself.
+async function passcodeStore(store) {
+  let saved = await store.loadAuth();
   const verified = new Set(); // hashing is slow on purpose; remember codes that already matched
   return {
     isSet: () => !!saved,
@@ -405,26 +406,42 @@ function passcodeStore(dataDir) {
       if (ok) verified.add(given);
       return ok;
     },
-    set(code) {
+    async set(code) {
+      let next = null;
+      if (code) {
+        const salt = crypto.randomBytes(16);
+        next = { salt: salt.toString('hex'), hash: crypto.scryptSync(code, salt, 32).toString('hex') };
+      }
+      await store.saveAuth(next);
+      saved = next;
       verified.clear();
-      if (!code) { saved = null; fs.rmSync(file, { force: true }); return; }
-      const salt = crypto.randomBytes(16);
-      saved = { salt: salt.toString('hex'), hash: crypto.scryptSync(code, salt, 32).toString('hex') };
-      fs.writeFileSync(file, JSON.stringify(saved));
     },
   };
 }
 
-export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = process.env.HFL_PASSCODE || '' } = {}) {
-  fs.mkdirSync(dataDir, { recursive: true });
-  const appPass = passcodeStore(dataDir);
-  const dbFile = path.join(dataDir, 'db.json');
-  let db = fs.existsSync(dbFile) ? { ...emptyDb(), ...JSON.parse(fs.readFileSync(dbFile, 'utf8')) } : emptyDb();
+export async function createHflServer({
+  dataDir = path.join(ROOT, 'data'),
+  passcode = process.env.HFL_PASSCODE || '',
+  store = fileStore(dataDir),
+} = {}) {
+  const appPass = await passcodeStore(store);
+  let db = await store.load();
+  // Switching to Firebase with an existing local league? Carry it over on first start.
+  const localFile = path.join(dataDir, 'db.json');
+  if (!db && store.kind !== 'file' && fs.existsSync(localFile)) {
+    db = JSON.parse(fs.readFileSync(localFile, 'utf8'));
+    await store.save(db);
+    console.log(`   Copied the existing league from ${localFile} into ${store.label}.`);
+    console.log('   (Hall of Fame photos stay local; re-add any you want to keep.)');
+  }
+  db = { ...emptyDb(), ...(db || {}) };
 
-  const save = () => {
-    const tmp = dbFile + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db));
-    fs.renameSync(tmp, dbFile);
+  // One change at a time: each waits for the previous one to be saved.
+  let queue = Promise.resolve();
+  const exclusive = (fn) => {
+    const run = queue.then(fn, fn);
+    queue = run.catch(() => {});
+    return run;
   };
 
   const clients = new Set();
@@ -434,7 +451,7 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
   const heartbeat = setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000);
   heartbeat.unref();
 
-  const routes = buildRoutes({ dataDir });
+  const routes = buildRoutes({ store });
 
   // HFL_PASSCODE on the server wins; otherwise whatever was set in the app (if anything).
   const passRequired = () => !!passcode || appPass.isSet();
@@ -487,7 +504,7 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
           const body = await readBody(req);
           const code = str(body.passcode, 32, { name: 'passcode' });
           if (code && code.length < 4) throw bad('passcode needs at least 4 characters');
-          appPass.set(code);
+          await exclusive(() => appPass.set(code));
           // Tell every open phone to re-check, so they get asked for the new code.
           for (const c of clients) c.write('event: auth\ndata: {}\n\n');
           return send(res, 200, { ok: true, required: passRequired() });
@@ -510,12 +527,24 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
           if (!m) continue;
           const params = Object.fromEntries(r.keys.map((k, i) => [k, m[i + 1]]));
           const body = await readBody(req);
-          // Mutate a copy so a validation error halfway through never leaves junk behind.
-          const draft = structuredClone(db);
-          const result = r.handler(draft, body || {}, params);
-          draft.version = db.version + 1;
-          db = draft;
-          save();
+          const result = await exclusive(async () => {
+            // Mutate a copy so a validation error halfway through never leaves junk behind,
+            // and only switch to it once it's safely stored.
+            const draft = structuredClone(db);
+            const fx = { before: [], after: [] };
+            const out = r.handler(draft, body || {}, params, fx);
+            for (const f of fx.before) await f();
+            draft.version = db.version + 1;
+            try {
+              await store.save(draft);
+            } catch (err) {
+              console.error('save failed:', err.message);
+              throw new HttpError(503, "couldn't save that. Check the connection and try again");
+            }
+            db = draft;
+            for (const f of fx.after) await f().catch((e) => console.error('cleanup failed:', e.message));
+            return out;
+          });
           broadcast();
           return send(res, 200, { ok: true, result: result ?? null, db });
         }
@@ -523,7 +552,11 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
       if (p.startsWith('/uploads/')) {
-        return serveFile(res, path.join(dataDir, 'uploads', path.basename(p)), 'public, max-age=31536000, immutable');
+        const name = path.basename(p);
+        const buf = await store.getImage(name);
+        if (!buf) { res.writeHead(404); return res.end('not found'); }
+        res.writeHead(200, { 'content-type': MIME[path.extname(name)] || 'image/webp', 'cache-control': 'public, max-age=31536000, immutable' });
+        return res.end(buf);
       }
       const file = path.normalize(path.join(PUBLIC_DIR, p === '/' ? 'index.html' : p));
       if (!file.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(403); return res.end(); }
@@ -541,8 +574,14 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 3000;
-  createHflServer({ dataDir: process.env.HFL_DATA_DIR || path.join(ROOT, 'data') }).listen(port, () => {
-    console.log(`🏈 HFL is live on http://localhost:${port}`);
-    if (!process.env.HFL_PASSCODE) console.log('   (no HFL_PASSCODE set — anyone with the link can edit)');
-  });
+  const dataDir = process.env.HFL_DATA_DIR || path.join(ROOT, 'data');
+  try {
+    const store = storeFromEnv(process.env, dataDir);
+    console.log(`🏈 HFL starting. Saving to ${store.label}`);
+    const server = await createHflServer({ dataDir, store });
+    server.listen(port, () => console.log(`🏈 HFL is live on http://localhost:${port}`));
+  } catch (err) {
+    console.error(`\n❌ HFL couldn't start: ${err.message}\n`);
+    process.exit(1);
+  }
 }
