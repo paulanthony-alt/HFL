@@ -1,6 +1,6 @@
 // Demo league so a fresh install has something to look at. Loaded from Settings
 // (or the first-run screen) and only into an empty league.
-import { balanceTeams, computeLeague } from './public/engine.js';
+import { balanceTeams, computeLeague } from './engine.js';
 
 const CREW = [
   ['Marcus Hill', 'Slingshot', 'QB', 84, '🎯', '#ff6b1a', 7],

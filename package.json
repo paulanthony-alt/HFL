@@ -1,13 +1,16 @@
 {
   "name": "hfl",
   "version": "1.0.0",
-  "description": "The HFL — pickup football league app: RSVPs, balanced teams, live stat tracking, leaderboards, player cards, playbook, trash talk and the Hall of Fame.",
+  "description": "The HFL: pickup football league app with RSVPs, balanced teams, live stats, leaderboards, player cards, playbook, trash talk and the Hall of Fame. Runs on Firebase or on its own.",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "emulators": "npx --yes firebase-tools@15 emulators:start --only auth,firestore --project demo-hfl"
   }
 }

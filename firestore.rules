@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// Only the shared crew login (Authentication → Users → crew@hfl.app) can read or
+// write anything. Everyone else, signed in or not, is locked out.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isCrew() {
+      return request.auth != null && request.auth.token.email == 'crew@hfl.app';
+    }
+    match /{document=**} {
+      allow read, write: if isCrew();
+    }
+  }
+}

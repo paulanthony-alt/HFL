@@ -10,7 +10,7 @@ const lsGet = (k) => { try { return localStorage.getItem(k) || ''; } catch { ret
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* private mode */ } };
 
 const S = {
-  db: null, league: null, auth: null, es: null,
+  db: null, league: null, auth: null, es: null, backend: null, fbConfig: null,
   me: lsGet('hfl.me'), pass: lsGet('hfl.pass'),
   season: null, statTab: 'mvp', fameTab: 'best',
   log: null, editor: null, scores: {}, editorHash: null, after: null, pending: false, lastPath: null,
@@ -71,6 +71,11 @@ function toast(msg, isError = false) {
 // Server sync
 
 async function api(method, url, body) {
+  if (S.backend) { // Firebase: run the change right here against Firestore
+    const { result, db } = await S.backend.request(method, url, body);
+    setDb(db);
+    return result;
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(url, {
       method,
@@ -191,6 +196,7 @@ function render() {
   $('#view').dataset.tab = match.tab || 'other';
   $('#view').innerHTML = match.fn(...match.args, new URLSearchParams(qs || ''));
   S.after?.();
+  hydrateImages();
   renderChrome(match.tab);
   if (S.lastPath !== path) {
     window.scrollTo(0, 0);
@@ -203,6 +209,14 @@ function render() {
     S.enterTimer = setTimeout(() => v.classList.remove('enter'), 750);
   }
   S.lastPath = path;
+}
+
+// Firebase keeps Hall of Fame photos in Firestore; fill them in after the page renders.
+function hydrateImages() {
+  if (!S.backend) return;
+  document.querySelectorAll('img[data-fsimg]').forEach((img) => {
+    S.backend.getImage(img.dataset.fsimg).then((src) => { if (src) img.src = src; }).catch(() => {});
+  });
 }
 
 function renderChrome(tab) {
@@ -1009,7 +1023,7 @@ function viewFame() {
       const g = f.gameId && S.db.games.find((x) => x.id === f.gameId);
       return `
       <article class="fame ${i === 0 ? 'top' : ''}">
-        ${f.image ? `<img src="${h(f.image)}" alt="" loading="lazy">` : ''}
+        ${f.image ? (f.image.startsWith('fsimg:') ? `<img data-fsimg="${h(f.image.slice(6))}" alt="">` : `<img src="${h(f.image)}" alt="" loading="lazy">`) : ''}
         <div class="fame-body">
           <div class="fame-title">${i === 0 ? '🥇 ' : ''}${h(f.title)}</div>
           ${f.description ? `<p>${h(f.description)}</p>` : ''}
@@ -1069,9 +1083,9 @@ async function resizeImage(file, max = 1200) {
     const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * scale), height: Math.round(img.height * scale) });
     canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
     // Keep photos small enough for any storage backend (Firebase caps them at 700KB).
-    let quality = 0.82, url = canvas.toDataURL('image/jpeg', quality);
-    while (url.length * 0.75 > 600 * 1024 && quality > 0.35) url = canvas.toDataURL('image/jpeg', (quality -= 0.12));
-    return url;
+    let quality = 0.82, dataUrl = canvas.toDataURL('image/jpeg', quality);
+    while (dataUrl.length * 0.75 > 600 * 1024 && quality > 0.35) dataUrl = canvas.toDataURL('image/jpeg', (quality -= 0.12));
+    return dataUrl;
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -1103,8 +1117,15 @@ function viewSettings() {
       <p class="muted small">Set everyone's rating yourself, or let the stats decide.</p>
     </section>
     <section class="card">
-      <h3>Crew passcode</h3>
-      ${S.auth?.managedBy === 'server' ? `<p class="muted small">This passcode is set on the server (the HFL_PASSCODE setting), so change it there.</p>` : `
+      <h3>${S.auth?.managedBy === 'firebase' ? 'Crew password' : 'Crew passcode'}</h3>
+      ${S.auth?.managedBy === 'firebase' ? `
+        <p class="muted small">Everyone signs in once per phone with the crew password. Changing it signs every other phone out within the hour, so tell the crew the new one.</p>
+        <form data-f="crewpass-change" class="form">
+          <label>Current password <input name="current" type="password" required autocomplete="current-password"></label>
+          <label>New password <input name="next" required minlength="6" maxlength="64" autocomplete="new-password" placeholder="at least 6 characters"></label>
+          <button class="btn">Change crew password</button>
+        </form>
+        <button class="btn ghost block" data-a="sign-out">Sign this phone out</button>` : S.auth?.managedBy === 'server' ? `<p class="muted small">This passcode is set on the server (the HFL_PASSCODE setting), so change it there.</p>` : `
         <p class="muted small">${S.auth?.required
           ? 'The app is locked. Each phone types the passcode once and it’s remembered.'
           : 'Right now anyone with the link can get in and edit. Set a passcode to lock it to the crew.'}</p>
@@ -1116,9 +1137,9 @@ function viewSettings() {
     </section>
     <section class="card">
       <h3>Backup</h3>
-      <p class="muted small">Download everything (players, games, stats, plays, posts) as one file. Restore it on any HFL server.</p>
+      <p class="muted small">Download everything (players, games, stats, plays, posts) as one file. Restore it on any HFL, on Firebase or on a computer.</p>
       <div class="btn-row">
-        <a class="btn ghost grow" href="/api/export?pass=${encodeURIComponent(S.pass)}" download="hfl-backup.json">⬇ Download backup</a>
+        <button class="btn ghost grow" data-a="export">⬇ Download backup</button>
         <label class="btn ghost grow file-btn">⬆ Restore<input type="file" accept="application/json,.json" data-ch="import" hidden></label>
       </div>
     </section>
@@ -1252,6 +1273,16 @@ const A = {
     toast('Filled in the stat ratings. Hit Save to lock them in.');
   },
   'remove-pass': () => confirm('Remove the passcode? Anyone with the link will be able to get in.') && run(() => setPasscode(''), 'Passcode removed'),
+  export: () => {
+    const blob = new Blob([JSON.stringify(S.db, null, 2)], { type: 'application/json' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `hfl-backup-${todayISO()}.json` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  },
+  'sign-out': () => {
+    if (!confirm('Sign this phone out? You\'ll need the crew password to get back in.')) return;
+    S.backend.auth.signOut();
+  },
   'forget-pass': () => { S.pass = ''; lsSet('hfl.pass', ''); toast('Passcode forgotten on this phone'); render(); },
 };
 
@@ -1301,11 +1332,27 @@ const FORMS = {
     const code = d.code.trim();
     run(() => setPasscode(code), `🔒 Passcode set. Tell the crew: it's what you just typed`).then(() => form.reset?.());
   },
-  passcode: async (d) => {
+  passcode: async (d, form) => {
+    if (S.backend) { // Firebase crew login
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        await S.backend.auth.signIn(d.pass);
+        bootFirebase();
+      } catch (e) {
+        toast(e.message, true);
+        btn.disabled = false;
+      }
+      return;
+    }
     S.pass = d.pass.trim();
     lsSet('hfl.pass', S.pass);
     boot();
   },
+  'crewpass-change': (d, form) => run(async () => {
+    await S.backend.auth.changePassword(d.current, d.next);
+    form.reset();
+  }, '🔒 Crew password changed. Tell the crew the new one'),
   player: async (d, form) => {
     const id = form.dataset.id;
     const body = {
@@ -1379,20 +1426,68 @@ document.addEventListener('submit', (e) => {
 // ---------------------------------------------------------------------------
 // Boot
 
+const loginScreen = (label, hint, failed = '') => `
+  <section class="hero"><div class="hero-kicker">Crew only</div><div class="hero-logo">HFL</div><p class="hero-tag">${hint}</p></section>
+  <section class="card">
+    <form data-f="passcode" class="form">
+      <label>${label} <input name="pass" type="password" required autocomplete="current-password" autofocus></label>
+      <button class="btn hot block">Let me in</button>
+    </form>
+    ${failed ? `<p class="muted small">${failed}</p>` : ''}
+  </section>`;
+
+// Running on Firebase Hosting? It serves the project's config at this reserved URL.
+async function firebaseConfig() {
+  try {
+    const res = await fetch('/__/firebase/init.json');
+    if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return null;
+    const cfg = await res.json();
+    return cfg?.projectId ? cfg : null;
+  } catch {
+    return null;
+  }
+}
+
+async function bootFirebase() {
+  try {
+    if (!S.backend) {
+      const { connectFirebase } = await import('./backend-firebase.js');
+      S.backend = await connectFirebase(S.fbConfig);
+      // Signed out (here, or because the crew password changed): back to the login screen.
+      S.backend.auth.onChange((user) => { if (!user && S.db) { S.db = null; S.backend.stop(); bootFirebase(); } });
+      const dot = () => $('#live-dot').classList.toggle('on', navigator.onLine);
+      window.addEventListener('online', dot);
+      window.addEventListener('offline', dot);
+      dot();
+    }
+    const user = S.backend.auth.current() || await S.backend.auth.waitForUser();
+    S.auth = { required: true, ok: !!user, managedBy: 'firebase' };
+    if (!user) {
+      $('#view').innerHTML = loginScreen('Crew password', 'Members only. Type the crew password.');
+      return;
+    }
+    const db = await S.backend.start(
+      (next) => setDb(next, { remote: true }),
+      (err) => { toast(err.message, true); },
+    );
+    setDb(db);
+    if (!boot.started) {
+      boot.started = true;
+      window.addEventListener('hashchange', render);
+    }
+    render();
+  } catch (e) {
+    $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach Firebase', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
+  }
+}
+
 async function boot() {
+  if (S.fbConfig || (S.fbConfig = await firebaseConfig())) return bootFirebase();
   try {
     const auth = await fetch('/api/auth', { headers: { 'x-hfl-pass': S.pass } }).then((r) => r.json());
     S.auth = auth;
     if (auth.required && !auth.ok) {
-      $('#view').innerHTML = `
-        <section class="hero"><div class="hero-kicker">Crew only</div><div class="hero-logo">HFL</div><p class="hero-tag">Members only. Type the crew passcode.</p></section>
-        <section class="card">
-          <form data-f="passcode" class="form">
-            <label>Crew passcode <input name="pass" type="password" required autocomplete="current-password" autofocus></label>
-            <button class="btn hot block">Let me in</button>
-          </form>
-          ${S.pass ? '<p class="muted small">That passcode didn\'t work.</p>' : ''}
-        </section>`;
+      $('#view').innerHTML = loginScreen('Crew passcode', 'Members only. Type the crew passcode.', S.pass ? "That passcode didn't work." : '');
       return;
     }
     await loadState();

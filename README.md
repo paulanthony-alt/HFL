@@ -16,63 +16,52 @@ The official app of the HFL pickup football league. Works on any phone browser �
 | **Trash-talk wall + MVP vote** | Post smack, react 🔥😂💀🧂🗑️, and use 🎲 Roast to get a burn written from someone's real stats. Everyone who played votes for MVP (no voting for yourself). |
 | **Hall of Fame** | Best plays, dumbest moments and worst drops, with photos and upvotes. Tap 🏛️ on any logged play to enshrine it. |
 
-## Running it
+## Putting it online (Firebase)
 
-You need [Node.js](https://nodejs.org) 20 or newer. There's nothing to install.
+The HFL runs entirely on Firebase's free plan: Firebase Hosting serves the app, Firestore stores the league, and the crew signs in with one shared password. Always on, nothing to keep running. Once it's set up, every change pushed to GitHub goes live by itself.
+
+**One-time setup (all in the browser):**
+
+1. **Create the project.** [console.firebase.google.com](https://console.firebase.google.com) → *Create a project*.
+2. **Turn on the database.** *Build → Firestore Database → Create database* → **Standard edition**, database ID `(default)`, a location near you, **production mode**.
+3. **Register the web app.** *Project Overview → + Add app → Web (`</>`)* → nickname `HFL` → tick **Also set up Firebase Hosting** → *Register app*. (No need to copy the config it shows; the app reads it automatically.)
+4. **Create the crew login.** *Build → Authentication → Get started → Email/Password → Enable → Save*. Then *Users → Add user*: email **`crew@hfl.app`** (exactly this; the security rules only let this account in) and the crew password (6+ characters, e.g. `hfl6767`).
+5. **Get a deploy key.** ⚙️ *Project settings → Service accounts → Generate new private key*. Keep the downloaded file private.
+6. **Let the key deploy.** Open [console.cloud.google.com/iam-admin/iam](https://console.cloud.google.com/iam-admin/iam), pick your project, click ✏️ next to the `firebase-adminsdk-…` account → *Add another role* → **Firebase Admin** → *Save*.
+7. **Give the key to GitHub.** In this repo on GitHub: *Settings → Secrets and variables → Actions → New repository secret*. Name: `FIREBASE_SERVICE_ACCOUNT`. Value: paste the **entire** key file. Save.
+8. **Deploy.** GitHub → *Actions → Deploy to Firebase → Run workflow*. When it's green, the summary shows your link: `https://<project-id>.web.app`.
+
+Open the link, type the crew password, tap **Who are you?**, and send the link to the group chat. On iPhone use Share → **Add to Home Screen**; on Android ⋮ → **Add to Home screen**.
+
+The deploy also installs `firestore.rules`, which blocks everyone except the crew login. Change the crew password any time in ⚙️ Settings; other phones get signed out within the hour.
+
+## Running it on your own computer
+
+For trying things out, or if you'd rather host it yourself. Needs [Node.js](https://nodejs.org) 20+, nothing else to install.
 
 ```bash
 npm start            # http://localhost:3000
 ```
 
-Open it, tap **Load a demo crew** to look around, or add your real crew. Each person taps **Who are you?** once on their phone so their RSVPs, votes and posts are theirs.
+Data is saved to `data/db.json` (photos in `data/uploads/`). Set a crew passcode in ⚙️ Settings, or with the `HFL_PASSCODE` environment variable. `PORT` and `HFL_DATA_DIR` change the port and data folder.
 
-Settings you can pass as environment variables:
-
-| Variable | What it does |
-|---|---|
-| `PORT` | Port to listen on (default `3000`) |
-| `HFL_PASSCODE` | Optional. Locks the passcode from the server side (overrides the one set in the app). |
-| `HFL_DATA_DIR` | Where data is stored (default `./data`) |
-| `FIREBASE_SERVICE_ACCOUNT` | Optional. Save to Firebase instead of a file (see below). |
-
-### Crew passcode
-
-Open ⚙️ Settings → **Crew passcode**, type a code, and tap **Set passcode**. From then on every phone has to type it once (it's remembered after that), and anyone who's already in gets asked for it right away. You can change or remove it from the same place. The server only stores a scrambled (hashed) copy, never the code itself, and it isn't included in backups.
-
-Everything is saved to `data/db.json` (photos go in `data/uploads/`). You can also download and restore a backup from ⚙️ Settings.
-
-## Putting it online for the crew
-
-Any host that runs Node and gives you a **persistent disk** works (Render, Railway, Fly.io, a Raspberry Pi, an old laptop). Set the start command to `npm start`, point `HFL_DATA_DIR` at the persistent disk, and set the crew passcode in the app right away. Then send the link to the group chat. On iPhone use Share → **Add to Home Screen**, on Android use ⋮ → **Add to Home screen**.
-
-> Hosts without a persistent disk wipe your data every time they restart. Use the backup button if you're not sure.
-
-## Saving to Firebase (optional)
-
-By default the league is saved in `data/db.json`, which needs a host with a permanent disk. If you give the app Firebase credentials, it saves everything to **Cloud Firestore** instead, so you can host it anywhere (even a free plan that wipes its disk). Nothing else changes.
-
-1. Go to [console.firebase.google.com](https://console.firebase.google.com) → **Create a project** (Google Analytics: off is fine).
-2. In the left menu: **Build → Firestore Database → Create database**. Pick **production mode** and a location near you. (Production mode blocks phones from touching the database directly. That's what you want, because only the HFL server talks to it.)
-3. ⚙️ **Project settings → Service accounts → Generate new private key**. A `.json` file downloads. **Treat it like a password: never post it or commit it.**
-4. Give it to the server, one of two ways:
-   - Local: `FIREBASE_SERVICE_ACCOUNT_FILE=/path/to/key.json npm start`
-   - Hosting (Render, Railway, …): add an environment variable `FIREBASE_SERVICE_ACCOUNT` and paste the **entire contents** of the key file as its value.
-5. Start it. The first line of the log says where it's saving, e.g. `Saving to Firebase project "hfl-12345"`.
-
-If a `data/db.json` already exists, it's copied into Firebase automatically the first time. The crew passcode and Hall of Fame photos are stored in Firebase too. It all fits comfortably in Firebase's free plan (a few reads when the server starts, one write per change).
+**Moving data between the two:** ⚙️ Settings → *Download backup* on one, *Restore* on the other.
 
 ## For developers
 
-- `server.js`: zero-dependency HTTP server and JSON API. Every change is validated on a copy of the data and only saved if it succeeds, then pushed to every open phone over Server-Sent Events.
-- `public/engine.js`: all the league logic (stats, QB rating, ratings, MVP, team balancing). It's pure and shared by the server, the browser and the tests.
-- `public/app.js`: the app itself (vanilla JS, hash routing, no build step).
+- `public/engine.js`: all the league math (stats, QB rating, ratings, MVP, team balancing). Pure, shared by everything, unit-tested.
+- `public/league.js`: every change the app can make, with validation. The same code runs on the local server and, on Firebase, in the browser.
+- `public/backend-firebase.js`: Firebase mode. Live Firestore listeners, and each change runs `league.js` on a draft then writes the changed documents in one transaction, checking each document's revision so simultaneous edits from different phones never overwrite each other.
+- `public/app.js`: the app itself (vanilla JS, hash routing, no build step). Picks Firebase when `/__/firebase/init.json` exists (Firebase Hosting), otherwise the local server.
 - `public/playbook.js`: field rendering, the touch play editor, animation and PNG export.
-- `storage.js`: where the league is saved: a local file, or Firestore over its REST API (no SDK needed).
-- `demo.js`: the demo league.
+- `public/vendor/firebase.js`: the Firebase SDK, bundled from `tools/firebase-entry.js` (rebuild command at the top of the file).
+- `server.js` + `storage.js`: the zero-dependency local server (JSON file storage, live updates over Server-Sent Events).
+- `firestore.rules`, `firebase.json`, `.github/workflows/deploy-firebase.yml`: Firebase security rules, hosting config and auto-deploy.
 
 ```bash
-npm test       # engine + API tests (node:test)
-npm run dev    # restarts on file changes
+npm test            # engine + league + local server tests (node:test)
+npm run dev         # local server, restarts on file changes
+npm run emulators   # Firebase Auth + Firestore emulators (needs Java), for testing Firebase mode
 ```
 
 **QB rating** uses the NFL passer-rating formula without the yardage part (nobody measures yards at the park), scaled so a perfect game is still 158.3.
