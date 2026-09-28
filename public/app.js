@@ -13,7 +13,7 @@ const S = {
   db: null, league: null, auth: null, es: null,
   me: lsGet('hfl.me'), pass: lsGet('hfl.pass'),
   season: null, statTab: 'mvp', fameTab: 'best',
-  log: null, editor: null, editorHash: null, after: null, pending: false, lastPath: null,
+  log: null, editor: null, scores: {}, editorHash: null, after: null, pending: false, lastPath: null,
 };
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
@@ -188,10 +188,20 @@ function render() {
   }
   match ||= { fn: viewHome, tab: 'game', args: [] };
   S.after = null;
+  $('#view').dataset.tab = match.tab || 'other';
   $('#view').innerHTML = match.fn(...match.args, new URLSearchParams(qs || ''));
   S.after?.();
   renderChrome(match.tab);
-  if (S.lastPath !== path) window.scrollTo(0, 0);
+  if (S.lastPath !== path) {
+    window.scrollTo(0, 0);
+    const v = $('#view');
+    v.classList.remove('enter');
+    void v.offsetWidth; // restart the entrance animation
+    v.classList.add('enter');
+    // Only animate on navigation, not on every live re-render of the same page.
+    clearTimeout(S.enterTimer);
+    S.enterTimer = setTimeout(() => v.classList.remove('enter'), 750);
+  }
   S.lastPath = path;
 }
 
@@ -216,12 +226,16 @@ const needMe = () => {
 function scoreboard(g) {
   const { summary } = gameInfo(g);
   const w = summary.winner;
-  const status = g.status === 'live' ? '<span class="chip live">● LIVE</span>' : g.status === 'final' ? '<span class="chip">FINAL</span>' : '';
+  // Flash a score when it changes between renders (someone just scored).
+  const prev = S.scores[g.id];
+  S.scores[g.id] = { ...summary.score };
+  const bump = (side) => (prev && prev[side] !== summary.score[side] ? 'bump' : '');
+  const status = g.status === 'live' ? '<span class="chip live">Live</span>' : g.status === 'final' ? '<span class="chip">Final</span>' : '';
   return `
     <div class="scoreboard">
-      <div class="sb-team ${w === 'A' ? 'win' : ''}"><div class="sb-name">${h(teamName(g, 'A'))}</div><div class="sb-score">${summary.score.A}</div></div>
+      <div class="sb-team sb-A ${w === 'A' ? 'win' : ''} ${w && w !== 'A' ? 'lose' : ''}"><div class="sb-name">${h(teamName(g, 'A'))}</div><div class="sb-score ${bump('A')}">${summary.score.A}</div></div>
       <div class="sb-mid">${status}<div class="sb-date">${h(fmtDate(g.date))}</div></div>
-      <div class="sb-team ${w === 'B' ? 'win' : ''}"><div class="sb-name">${h(teamName(g, 'B'))}</div><div class="sb-score">${summary.score.B}</div></div>
+      <div class="sb-team sb-B ${w === 'B' ? 'win' : ''} ${w && w !== 'B' ? 'lose' : ''}"><div class="sb-name">${h(teamName(g, 'B'))}</div><div class="sb-score ${bump('B')}">${summary.score.B}</div></div>
     </div>`;
 }
 
@@ -276,6 +290,29 @@ function seasons() {
   return [...set].filter(Boolean).sort().reverse();
 }
 
+// Line-art illustrations for empty states. Stroke is currentColor; `.acc` parts pick up the accent.
+const ART = {
+  field: `<svg viewBox="0 0 120 90" aria-hidden="true"><path d="M8 86h104"/><path d="M60 86V54M34 54h52M34 54V8M86 54V8"/><path class="acc" d="M12 78C22 44 40 26 55 22" stroke-dasharray="2 6"/><g class="acc" transform="rotate(-28 64 22)"><ellipse cx="64" cy="22" rx="11" ry="6.5"/><path d="M58.5 22h11M61 20v4M64 20v4M67 20v4"/></g></svg>`,
+  chalk: `<svg viewBox="0 0 120 90" aria-hidden="true"><circle cx="24" cy="66" r="8"/><circle cx="56" cy="70" r="8"/><path d="M84 58l12 12M96 58L84 70M84 16l12 12M96 16L84 28"/><path class="acc" d="M24 56C26 30 44 18 70 20"/><path class="acc" d="M64 14l7 6-7 6"/><path class="acc" d="M56 60c2-12 8-18 16-22" stroke-dasharray="2 5"/></svg>`,
+  mic: `<svg viewBox="0 0 120 90" aria-hidden="true"><path d="M22 36h14l38-20v52L36 50H22z"/><path d="M36 50l7 24H33l-7-24"/><path class="acc" d="M86 32c6 7 6 17 0 24M96 24c11 12 11 30 0 42"/></svg>`,
+  trophy: `<svg viewBox="0 0 120 90" aria-hidden="true"><path d="M44 10h32v22a16 16 0 0 1-32 0z"/><path d="M44 16H33a10 10 0 0 0 12 18M76 16h11a10 10 0 0 1-12 18M60 48v12M48 84h24M51 60h18v24H51z"/><path class="acc" d="M20 20v8M16 24h8M100 44v8M96 48h8M92 10v6M89 13h6"/></svg>`,
+  chart: `<svg viewBox="0 0 120 90" aria-hidden="true"><path d="M14 80h92"/><rect x="24" y="52" width="14" height="28" rx="2"/><rect x="46" y="36" width="14" height="44" rx="2"/><rect class="acc" x="68" y="18" width="14" height="62" rx="2"/><rect x="90" y="44" width="10" height="36" rx="2" opacity=".5"/></svg>`,
+  cards: `<svg viewBox="0 0 120 90" aria-hidden="true"><rect x="30" y="14" width="40" height="58" rx="5" transform="rotate(-10 50 43)"/><rect class="acc" x="52" y="12" width="40" height="58" rx="5" transform="rotate(8 72 41)"/><path class="acc" d="M66 50l6-14 6 14"/></svg>`,
+  whistle: `<svg viewBox="0 0 120 90" aria-hidden="true"><path d="M30 40h44a18 18 0 1 1-18 18H38a8 8 0 0 1-8-8z"/><circle cx="74" cy="58" r="6"/><path d="M30 40l-8-8"/><path class="acc" d="M86 22l8-8M96 32h10M78 16V6"/></svg>`,
+};
+const empty = ({ art = 'field', title, text = '', cta = '' }) =>
+  `<div class="empty"><div class="empty-art">${ART[art]}</div><h3>${title}</h3>${text ? `<p>${text}</p>` : ''}${cta}</div>`;
+const sec = (title, extra = '') => `<div class="sec"><h3>${title}</h3>${extra}</div>`;
+const pageHead = (kicker, title, right = '') =>
+  `<header class="page-head"><div><div class="kicker">${kicker}</div><h1 class="page-title">${title}</h1></div>${right}</header>`;
+const rankBadge = (i) => `<span class="rk rk-${Math.min(i + 1, 4)}">${i + 1}</span>`;
+const PIN = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>';
+const ticket = (iso, cls = '') => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return `<div class="ticket ${cls}"><span>${h(dt.toLocaleDateString(undefined, { weekday: 'short' }))}</span><b>${d}</b><span>${h(dt.toLocaleDateString(undefined, { month: 'short' }))}</span></div>`;
+};
+
 // ---------------------------------------------------------------------------
 // Game views
 
@@ -290,63 +327,62 @@ function viewHome() {
   const table = E.seasonTable(S.db, S.league, S.db.settings.season);
   const leaders = Object.entries(table).sort((a, b) => E.mvpScore(b[1]) - E.mvpScore(a[1])).slice(0, 3);
 
-  return `
-    ${me() ? '' : `<a class="banner" href="#/me">👋 Tap here and pick who you are so your RSVPs, votes and posts count.</a>`}
+  const others = [...live.slice(1), ...upcoming.filter((g) => g !== current)];
+  const main = `
+    ${me() ? '' : `<a class="banner" href="#/me"><span class="banner-dot"></span><span><b>Who's holding this phone?</b> Pick yourself so your RSVPs, votes and posts count.</span><span class="banner-go">›</span></a>`}
     ${current ? gamePanel(current) : `
-      <section class="card center">
-        <div class="big-emoji">🏈</div>
-        <h2>No game on the schedule</h2>
-        <p class="muted">Set one up and the crew can start tapping in.</p>
-        <a class="btn hot" href="#/new-game">+ Schedule a game</a>
-      </section>`}
-    ${[...live.slice(1), ...upcoming.filter((g) => g !== current)].map((g) => `
-      <a class="row-link card-lite" href="#/g/${g.id}">
-        <span>${g.status === 'live' ? '<span class="chip live">● LIVE</span>' : '📅'} ${h(fmtDate(g.date))} ${h(fmtTime(g.time))}</span>
-        <span class="muted">${Object.values(g.rsvps).filter((s) => s === 'in').length} in ›</span>
-      </a>`).join('')}
-    ${current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}
+      <section class="card">${empty({ art: 'field', title: 'No game on the schedule', text: 'Set one up and the crew can start tapping in.', cta: '<a class="btn hot" href="#/new-game">Schedule a game</a>' })}</section>`}
+    ${others.length ? sec('Also on the schedule') + others.map((g) => `
+      <a class="row-card" href="#/g/${g.id}">
+        ${ticket(g.date, 'sm')}
+        <span class="grow"><b>${g.status === 'live' ? '<span class="chip live">Live</span> ' : ''}${h(fmtDate(g.date, { weekday: 'long' }))}${g.time ? ` · ${h(fmtTime(g.time))}` : ''}</b><span class="muted small">${h(g.location || 'Location TBD')}</span></span>
+        <span class="row-meta"><b>${Object.values(g.rsvps).filter((x) => x === 'in').length}</b> in</span>
+      </a>`).join('') : ''}
+    ${current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}`;
 
+  const rest = finals.filter((g) => g !== current);
+  const side = `
     ${leaders.length ? `
-      <h3 class="section">🏆 MVP race · ${h(S.db.settings.season)}</h3>
-      <div class="podium">${leaders.map(([id, s], i) => `
+      ${sec('MVP race', `<a class="sec-link" href="#/stats">Season ${h(S.db.settings.season)} ›</a>`)}
+      <div class="podium">${leaders.map(([id, st], i) => `
         <a href="#/p/${id}" class="pod pod-${i + 1}">
+          <span class="pod-rank">${i + 1}</span>
           ${avatar(id, 'lg')}
           <div class="pod-name">${h(nick(id))}</div>
-          <div class="pod-score">${Math.round(E.mvpScore(s))} pts</div>
+          <div class="pod-score"><b>${Math.round(E.mvpScore(st))}</b> pts</div>
         </a>`).join('')}
       </div>` : ''}
+    ${rest.length ? sec('Recent results') + rest.slice(0, 6).map(resultRow).join('') : ''}`;
 
-    ${finals.some((g) => g !== current) ? `
-      <h3 class="section">Recent results</h3>
-      ${finals.filter((g) => g !== current).slice(0, 6).map(resultRow).join('')}` : ''}
-  `;
+  return `<div class="home-grid"><div class="home-main">${main}</div>${side.trim() ? `<aside class="home-side">${side}</aside>` : ''}</div>`;
 }
 
 function resultRow(g) {
   const { summary, mvp } = gameInfo(g);
   const w = summary.winner;
   return `
-    <a class="result card-lite" href="#/g/${g.id}">
-      <div class="res-date">${h(fmtDate(g.date, { month: 'short', day: 'numeric' }))}</div>
+    <a class="result" href="#/g/${g.id}">
+      ${ticket(g.date, 'sm')}
       <div class="res-teams">
         <div class="${w === 'A' ? 'win' : ''}">${h(teamName(g, 'A'))} <b>${summary.score.A}</b></div>
         <div class="${w === 'B' ? 'win' : ''}">${h(teamName(g, 'B'))} <b>${summary.score.B}</b></div>
       </div>
-      <div class="res-mvp">${mvp?.winner ? `👑 ${h(nick(mvp.winner))}` : ''}</div>
+      <div class="res-mvp">${mvp?.winner ? `<span class="muted small">MVP</span>${h(nick(mvp.winner))}` : ''}</div>
     </a>`;
 }
 
 function viewOnboarding() {
   return `
     <section class="hero">
+      <div class="hero-kicker">Pickup football · Est. ${new Date().getFullYear()}</div>
       <div class="hero-logo">HFL</div>
       <p class="hero-tag">Your pickup league. Real stats. Zero mercy.</p>
     </section>
-    <section class="card">
+    <section class="card onboard">
       <h2>Start the league</h2>
       <p class="muted">Add your crew, schedule a game, and let everyone tap in. Teams balance themselves and ratings update after every game.</p>
       <a class="btn hot block" href="#/new-player">+ Add the first player</a>
-      <button class="btn ghost block" data-a="seed-demo">👀 Load a demo crew to try it out</button>
+      <button class="btn ghost block" data-a="seed-demo">Load a demo crew to try it out</button>
       <p class="muted small">Demo data can be wiped later by restoring an empty backup, or just start a fresh server.</p>
     </section>`;
 }
@@ -360,16 +396,16 @@ function viewGame(id) {
 function gamePanel(g) {
   const head = `
     <div class="game-head">
-      <div>
+      ${ticket(g.date)}
+      <div class="gh-main">
         <div class="kicker">${g.status === 'scheduled' ? 'Next game' : g.status === 'live' ? 'Game on' : 'Final'}</div>
-        <h2>${h(fmtDate(g.date, { weekday: 'long', month: 'short', day: 'numeric' }))}${g.time ? ` · ${h(fmtTime(g.time))}` : ''}</h2>
-        ${g.location ? `<div class="muted">📍 ${h(g.location)}</div>` : ''}
+        <h2 class="gh-title">${h(fmtDate(g.date, { weekday: 'long' }))}${g.time ? ` <span class="gh-time">${h(fmtTime(g.time))}</span>` : ''}</h2>
+        <div class="gh-loc">${PIN}${h(g.location || 'Location TBD')}</div>
       </div>
       <a class="icon-btn" href="#/g/${g.id}" aria-label="Game details">›</a>
     </div>`;
-  if (g.status === 'scheduled') return `<section class="card">${head}${rsvpSection(g)}${teamsSection(g)}</section>`;
-  if (g.status === 'live') return `<section class="card">${head}${liveSection(g)}</section>`;
-  return `<section class="card">${head}${finalSection(g)}</section>`;
+  const body = g.status === 'scheduled' ? rsvpSection(g) + teamsSection(g) : g.status === 'live' ? liveSection(g) : finalSection(g);
+  return `<section class="card game-card is-${g.status}">${head}${body}</section>`;
 }
 
 function rsvpSection(g) {
@@ -385,11 +421,11 @@ function rsvpSection(g) {
     <div class="rsvp">
       ${m ? `
         <div class="rsvp-me">
-          <button class="btn big ${mine === 'in' ? 'in' : 'ghost'}" data-a="rsvp" data-g="${g.id}" data-p="${m}" data-s="in">✅ I'm in</button>
-          <button class="btn big ${mine === 'out' ? 'out' : 'ghost'}" data-a="rsvp" data-g="${g.id}" data-p="${m}" data-s="out">❌ I'm out</button>
+          <button class="btn big rsvp-btn ${mine === 'in' ? 'in' : 'ghost'}" data-a="rsvp" data-g="${g.id}" data-p="${m}" data-s="in">I'm in</button>
+          <button class="btn big rsvp-btn ${mine === 'out' ? 'out' : 'ghost'}" data-a="rsvp" data-g="${g.id}" data-p="${m}" data-s="out">I'm out</button>
         </div>` : `<a class="btn ghost block" href="#/me">Pick who you are to RSVP</a>`}
-      <div class="count"><b>${ins.length}</b> in${ins.length >= TARGET_PLAYERS ? ' — we got a game 🔥' : ` · need ${TARGET_PLAYERS - ins.length} more for 5v5`}</div>
-      <div class="bar"><span style="width:${Math.min(100, (ins.length / TARGET_PLAYERS) * 100)}%"></span></div>
+      <div class="count"><b>${ins.length}</b><span>in</span><em>${ins.length >= TARGET_PLAYERS ? 'We got a game' : `Need ${TARGET_PLAYERS - ins.length} more for 5v5`}</em></div>
+      <div class="bar ${ins.length >= TARGET_PLAYERS ? 'full' : ''}">${Array.from({ length: TARGET_PLAYERS }, (_, i) => `<i class="${i < ins.length ? 'on' : ''}"></i>`).join('')}</div>
       <div class="chips-label">In</div><div class="chips">${ins.map(chip).join('') || '<span class="muted small">Nobody yet</span>'}</div>
       ${none.length ? `<div class="chips-label">No reply</div><div class="chips">${none.map(chip).join('')}</div>` : ''}
       ${outs.length ? `<div class="chips-label">Out</div><div class="chips">${outs.map(chip).join('')}</div>` : ''}
@@ -426,17 +462,16 @@ function teamsSection(g) {
   const bench = ins.filter((p) => !onTeam.has(p.id));
   return `
     <div class="divider"></div>
-    <h3>⚖️ Teams</h3>
+    ${sec('Teams', hasTeams ? '<span class="sec-link muted">Tap a player to swap sides</span>' : '')}
     ${hasTeams ? `
       ${teamColumns(g, { editable: true })}
-      <p class="muted small">Tap a player to move him to the other side.</p>
       ${bench.length ? `<div class="chips-label">In but not on a team</div><div class="chips">${bench.map((p) => `<button class="pchip" data-a="bench-add" data-g="${g.id}" data-p="${p.id}">+ ${h(nick(p.id))}</button>`).join('')}</div>` : ''}
       <div class="btn-row">
-        <button class="btn ghost" data-a="auto-teams" data-g="${g.id}">🔀 Reshuffle</button>
+        <button class="btn ghost" data-a="auto-teams" data-g="${g.id}">Reshuffle</button>
         <button class="btn hot grow" data-a="start" data-g="${g.id}">▶ Start game</button>
       </div>` : `
       <p class="muted">Once guys are in, the app splits them into the fairest teams it can find from everyone's rating.</p>
-      <button class="btn hot block" data-a="auto-teams" data-g="${g.id}" ${ins.length < 2 ? 'disabled' : ''}>⚖️ Make balanced teams (${ins.length} in)</button>`}`;
+      <button class="btn hot block" data-a="auto-teams" data-g="${g.id}" ${ins.length < 2 ? 'disabled' : ''}>Make balanced teams · ${ins.length} in</button>`}`;
 }
 
 function liveSection(g) {
@@ -449,10 +484,10 @@ function liveSection(g) {
     ${scoreboard(g)}
     ${keeper ? `<div class="muted small center">📝 Scorekeeper: ${h(nick(keeper))}</div>` : ''}
     ${isKeeper ? logger(g) : `<details class="log-anyway"><summary>Log a play anyway</summary>${logger(g)}</details>`}
-    <h3 class="section">Play by play</h3>
-    ${events.length ? `<ul class="feed">${events.map((ev) => eventRow(g, ev, true)).join('')}</ul>` : '<p class="muted">No plays logged yet.</p>'}
+    ${sec('Play by play', `<span class="sec-link muted">${events.length} logged</span>`)}
+    ${events.length ? `<ul class="feed">${events.map((ev) => eventRow(g, ev, true)).join('')}</ul>` : `<div class="empty-inline">${ART.whistle}<span>No plays logged yet. Pick a play type above to start.</span></div>`}
     <details class="card-lite"><summary>Rosters & live box score</summary>${boxScore(g, info)}</details>
-    <button class="btn block danger-outline" data-a="final" data-g="${g.id}">🏁 Final whistle</button>`;
+    <button class="btn block danger-outline" data-a="final" data-g="${g.id}">Final whistle</button>`;
 }
 
 function logger(g) {
@@ -517,13 +552,13 @@ function finalSection(g) {
   return `
     ${scoreboard(g)}
     ${mvpBlock(g)}
-    <h3 class="section">Box score</h3>
+    ${sec('Box score')}
     ${boxScore(g, info)}
     <p class="muted small">▲▼ = OVR change from this game (result vs. the odds, plus how much he balled out).</p>
     <details class="card-lite"><summary>Play by play (${g.events.length})</summary>
       <ul class="feed">${[...g.events].reverse().map((ev) => eventRow(g, ev, false)).join('')}</ul>
     </details>
-    <a class="btn block" href="#/wall">🗣️ Talk trash about this one</a>`;
+    <a class="btn block" href="#/wall">Talk trash about this one ›</a>`;
 }
 
 function mvpBlock(g) {
@@ -535,7 +570,10 @@ function mvpBlock(g) {
   const max = Math.max(1, ...tally.ranked.map((r) => r.votes));
   return `
     <div class="mvp">
-      <h3>👑 MVP of the day ${tally.winner ? `<span class="mvp-name">${h(nick(tally.winner))}</span>` : ''}</h3>
+      <div class="mvp-head">
+        <div><div class="kicker gold">MVP of the day</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
+        ${tally.winner ? `<span class="crown">${avatar(tally.winner, 'lg')}</span>` : ''}
+      </div>
       ${tally.ranked.length ? tally.ranked.slice(0, 5).map((r) => `
         <div class="vote-row">${avatar(r.id, 'xs')}<span class="vr-name">${h(nick(r.id))}</span>
           <span class="vr-bar"><span style="width:${(r.votes / max) * 100}%"></span></span><b>${r.votes}</b></div>`).join('') : '<p class="muted small">No votes yet.</p>'}
@@ -589,7 +627,7 @@ function viewNewGame() {
           <label>Team 1 <input name="teamA" maxlength="24" value="Shirts"></label>
           <label>Team 2 <input name="teamB" maxlength="24" value="Skins"></label>
         </div>
-        <button class="btn hot block">📅 Put it on the schedule</button>
+        <button class="btn hot block">Put it on the schedule</button>
       </form>
     </section>`;
 }
@@ -606,7 +644,7 @@ function viewStats() {
   const table = E.seasonTable(S.db, S.league, season);
   const rows = Object.entries(table).map(([id, s]) => ({ id, s }));
   const tab = S.statTab;
-  const medal = (i) => ['🥇', '🥈', '🥉'][i] || `<span class="rank">${i + 1}</span>`;
+  const medal = rankBadge;
   let cols = [], list = [], note = '';
   const record = (s) => `${s.w}-${s.l}${s.t ? `-${s.t}` : ''}`;
   if (tab === 'mvp') {
@@ -641,25 +679,23 @@ function viewStats() {
     note = 'Ratings move after every game: beat the odds and they go up. <a href="#/ratings">Rate players ›</a>';
   }
   return `
-    <div class="page-head">
-      <h2>Leaderboards</h2>
-      <select data-ch="season" aria-label="Season">
+    ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
+      <select class="pill-select" data-ch="season" aria-label="Season">
         ${seasons().map((s) => `<option value="${h(s)}" ${S.season === s ? 'selected' : ''}>Season ${h(s)}</option>`).join('')}
         <option value="career" ${S.season === 'career' ? 'selected' : ''}>Career</option>
-      </select>
-    </div>
+      </select>`)}
     <div class="tabs-scroll">${Object.entries(STAT_TABS).map(([k, l]) => `<button class="tab-chip ${tab === k ? 'on' : ''}" data-a="stat-tab" data-t="${k}">${l}</button>`).join('')}</div>
     ${list.length ? `
-      <table class="lb">
+      <div class="lb-wrap"><table class="lb">
         <thead><tr><th></th><th class="l">Player</th>${cols.map(([c]) => `<th>${c}</th>`).join('')}</tr></thead>
         <tbody>${list.map((r, i) => `
-          <tr class="${r.id === me() ? 'me' : ''}">
+          <tr class="${r.id === me() ? 'me' : ''} ${i < 3 ? `lb-podium lb-${i + 1}` : ''}">
             <td class="medal">${medal(i)}</td>
             <td class="l"><a href="#/p/${r.id}">${avatar(r.id, 'xs')} ${h(nick(r.id))}</a></td>
             ${cols.map(([, f]) => `<td>${f(r.s, r.id)}</td>`).join('')}
           </tr>`).join('')}
         </tbody>
-      </table>` : `<p class="muted center pad">Nothing here yet. Play some games and log some stats.</p>`}
+      </table></div>` : `<section class="card">${empty({ art: 'chart', title: 'No stats yet', text: 'Finish a game with a few plays logged and the leaderboards fill themselves in.' })}</section>`}
     ${note ? `<p class="muted small">${note}</p>` : ''}`;
 }
 
@@ -707,7 +743,7 @@ function tradingCard(id, { mini = false } = {}) {
         <div class="tc-ovr">${o}<small>OVR</small></div>
         <div class="tc-pos">${h(p.position || 'ATH')}${p.number !== '' && p.number !== undefined ? `<small>#${h(p.number)}</small>` : ''}</div>
       </div>
-      <div class="tc-art" style="--c:${h(p.color || '#ff6b1a')}"><span>${h(p.emoji || initials(p.name))}</span></div>
+      <div class="tc-art" style="--c:${h(p.color || '#ff6b1a')}">${p.number !== '' && p.number !== undefined ? `<i class="tc-num">${h(p.number)}</i>` : ''}<span>${h(p.emoji || initials(p.name))}</span></div>
       <div class="tc-name">${h(p.name)}</div>
       ${p.nickname ? `<div class="tc-nick">“${h(p.nickname)}”</div>` : '<div class="tc-nick">&nbsp;</div>'}
       <div class="tc-stats">
@@ -741,8 +777,8 @@ function tradingCard(id, { mini = false } = {}) {
 function viewCards() {
   const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
   return `
-    <div class="page-head"><h2>Player cards</h2><a class="btn sm" href="#/new-player">+ Player</a></div>
-    ${list.length ? `<div class="card-grid">${list.map((p) => tradingCard(p.id, { mini: true })).join('')}</div>` : '<p class="muted">No players yet.</p>'}`;
+    ${pageHead(`${list.length} on the roster`, 'Player cards', '<a class="btn sm" href="#/new-player">+ Player</a>')}
+    ${list.length ? `<div class="card-grid">${list.map((p) => tradingCard(p.id, { mini: true })).join('')}</div>` : `<section class="card">${empty({ art: 'cards', title: 'No cards printed yet', text: 'Add your crew and everyone gets a card that levels up with every game.', cta: '<a class="btn hot" href="#/new-player">Add a player</a>' })}</section>`}`;
 }
 
 function viewCard(id) {
@@ -770,10 +806,10 @@ function viewCard(id) {
           <span class="res res-${x.res}">${x.res}</span>
           <span class="glog-main"><b>${x.info.summary.score[x.side]}–${x.info.summary.score[x.side === 'A' ? 'B' : 'A']}</b> ${h(fmtDate(x.g.date, { month: 'short', day: 'numeric' }))}${x.mvp ? ' 👑' : ''}<br><span class="muted small">${statLine(x.stats)}</span></span>
           ${deltaTag(x.delta)}
-        </a>`).join('') : '<p class="muted">No games yet.</p>'}
+        </a>`).join('') : `<div class="empty-inline">${ART.whistle}<span>No games yet. His log starts after his first final whistle.</span></div>`}
     </section>
 
-    ${fame.length ? `<section class="card"><h3>🏛️ In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
+    ${fame.length ? `<section class="card"><h3>In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
     <a class="btn ghost block" href="#/p/${id}/edit">✎ Edit player</a>`;
 }
 
@@ -826,19 +862,14 @@ function viewMe() {
 function viewPlays() {
   const plays = [...S.db.plays].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   return `
-    <div class="page-head"><h2>Playbook</h2><a class="btn sm hot" href="#/play/new">+ New play</a></div>
+    ${pageHead(`${plays.length} play${plays.length === 1 ? '' : 's'} · 5v5`, 'Playbook', '<a class="btn sm hot" href="#/play/new">+ New play</a>')}
     ${plays.length ? `<div class="play-grid">${plays.map((pl) => `
       <a class="play-tile" href="#/play/${pl.id}">
         ${playSVG(pl, { cls: 'thumb' })}
         <div class="pt-name">${h(pl.name)}</div>
         <div class="muted small">${pl.authorId ? `by ${h(nick(pl.authorId))} · ` : ''}${h(ago(pl.updatedAt || pl.createdAt))}</div>
       </a>`).join('')}</div>` : `
-      <section class="card center">
-        <div class="big-emoji">📋</div>
-        <h3>No plays yet</h3>
-        <p class="muted">Draw routes with your finger, run the animation, and share it to the group chat before the game.</p>
-        <a class="btn hot" href="#/play/new">Draw the first play</a>
-      </section>`}`;
+      <section class="card">${empty({ art: 'chalk', title: 'The chalkboard is clean', text: 'Draw routes with your finger, run the animation, and share it to the group chat before the game.', cta: '<a class="btn hot" href="#/play/new">Draw the first play</a>' })}</section>`}`;
 }
 
 function viewPlay(id) {
@@ -909,23 +940,23 @@ function viewWall() {
   const posts = [...S.db.posts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const m = me();
   return `
+    ${pageHead('Post-game', 'Trash talk')}
     ${latest ? `
       <section class="card">
         <div class="kicker">Last game · ${h(fmtDate(latest.date))}</div>
         <div class="mini-score">${h(teamName(latest, 'A'))} <b>${gameInfo(latest).summary.score.A}</b> – <b>${gameInfo(latest).summary.score.B}</b> ${h(teamName(latest, 'B'))}</div>
         ${mvpBlock(latest)}
       </section>` : ''}
-    <section class="card">
-      <h2>🗣️ Trash-talk wall</h2>
+    <section class="card composer-card">
       ${m ? `
         <form data-f="post" class="form composer">
-          <textarea name="text" maxlength="500" rows="3" required placeholder="Say it with your chest…"></textarea>
+          <div class="composer-row">${avatar(m)}<textarea name="text" maxlength="500" rows="3" required placeholder="Say it with your chest…"></textarea></div>
           <div class="btn-row">
             <select name="gameId" aria-label="About which game">
               <option value="">No game tag</option>
               ${finals.slice(0, 8).map((g) => `<option value="${g.id}" ${g === latest ? 'selected' : ''}>${h(fmtDate(g.date, { month: 'short', day: 'numeric' }))}</option>`).join('')}
             </select>
-            <button type="button" class="btn ghost" data-a="roast" title="Generate a roast from real stats">🎲 Roast</button>
+            <button type="button" class="btn ghost" data-a="roast" title="Generate a roast from real stats">🎲 Roast me a line</button>
             <button class="btn hot grow">Post</button>
           </div>
         </form>` : `<a class="btn ghost block" href="#/me">Pick who you are to post</a>`}
@@ -939,7 +970,7 @@ function viewWall() {
           const who = post.reactions?.[e] || [];
           return `<button class="react ${m && who.includes(m) ? 'on' : ''}" data-a="react" data-id="${post.id}" data-e="${e}">${e}${who.length ? ` ${who.length}` : ''}</button>`;
         }).join('')}</div>
-      </article>`).join('') || '<p class="muted center pad">Quiet in here. Too quiet.</p>'}`;
+      </article>`).join('') || `<section class="card">${empty({ art: 'mic', title: 'Quiet in here. Too quiet.', text: 'Somebody has to start it. Hit Roast if you need help.' })}</section>`}`;
 }
 
 function roast() {
@@ -975,7 +1006,7 @@ function viewFame() {
   const list = S.db.fame.filter((f) => f.category === tab).sort((a, b) => b.votes.length - a.votes.length || b.createdAt.localeCompare(a.createdAt));
   const m = me();
   return `
-    <div class="page-head"><h2>🏛️ Hall of Fame</h2><a class="btn sm hot" href="#/fame/new">+ Enshrine</a></div>
+    ${pageHead('Saved forever', 'Hall of Fame', '<a class="btn sm hot" href="#/fame/new">+ Enshrine</a>')}
     <div class="tabs-scroll">${Object.entries(FAME).map(([k, c]) => `<button class="tab-chip ${tab === k ? 'on' : ''}" data-a="fame-tab" data-t="${k}">${c.emoji} ${c.label} <span class="muted">${S.db.fame.filter((f) => f.category === k).length}</span></button>`).join('')}</div>
     ${list.map((f, i) => {
       const g = f.gameId && S.db.games.find((x) => x.id === f.gameId);
@@ -995,7 +1026,7 @@ function viewFame() {
           </div>
         </div>
       </article>`;
-    }).join('') || `<p class="muted center pad">Nothing enshrined yet. Tap 🏛️ on any logged play to save it forever.</p>`}`;
+    }).join('') || `<section class="card">${empty({ art: 'trophy', title: 'Nothing enshrined yet', text: 'Tap 🏛️ on any logged play to save it forever, or add one by hand.', cta: '<a class="btn hot" href="#/fame/new">Enshrine a moment</a>' })}</section>`}`;
 }
 
 function viewFameNew(query) {
@@ -1027,7 +1058,7 @@ function viewFameNew(query) {
           <select name="gameId"><option value="">—</option>${finals.map((x) => `<option value="${x.id}" ${g?.id === x.id ? 'selected' : ''}>${h(fmtDate(x.date))} · ${h(teamName(x, 'A'))} vs ${h(teamName(x, 'B'))}</option>`).join('')}</select>
         </label>
         <label>Photo / screenshot (optional) <input type="file" name="image" accept="image/*"></label>
-        <button class="btn hot block">🏛️ Enshrine it forever</button>
+        <button class="btn hot block">Enshrine it forever</button>
       </form>
     </section>`;
 }
@@ -1068,18 +1099,18 @@ function viewSettings() {
       ${players.length ? '' : `<button class="btn ghost block" data-a="seed-demo">👀 Load demo crew</button>`}
     </section>
     <section class="card">
-      <div class="row-between"><h3>⭐ Rate players</h3><a class="btn sm hot" href="#/ratings">Open ›</a></div>
+      <div class="row-between"><h3>Rate players</h3><a class="btn sm hot" href="#/ratings">Open ›</a></div>
       <p class="muted small">Set everyone's rating yourself, or let the stats decide.</p>
     </section>
     <section class="card">
-      <h3>🔒 Crew passcode</h3>
+      <h3>Crew passcode</h3>
       ${S.auth?.managedBy === 'server' ? `<p class="muted small">This passcode is set on the server (the HFL_PASSCODE setting), so change it there.</p>` : `
         <p class="muted small">${S.auth?.required
           ? 'The app is locked. Each phone types the passcode once and it’s remembered.'
           : 'Right now anyone with the link can get in and edit. Set a passcode to lock it to the crew.'}</p>
         <form data-f="passcode-set" class="form">
           <label>${S.auth?.required ? 'New passcode' : 'Passcode'} <input name="code" required minlength="4" maxlength="32" autocomplete="new-password" placeholder="at least 4 characters"></label>
-          <button class="btn">🔒 ${S.auth?.required ? 'Change' : 'Set'} passcode</button>
+          <button class="btn">${S.auth?.required ? 'Change' : 'Set'} passcode</button>
         </form>
         ${S.auth?.required ? `<button class="btn ghost block danger" data-a="remove-pass">Remove passcode</button>` : ''}`}
     </section>
@@ -1110,7 +1141,7 @@ function viewRatings() {
     <section class="card">
       <h2>Rate players</h2>
       <p class="muted">Drag to set anyone's rating (40–99), then save. <b>📊 Stats say</b> is the app's rating from every logged game: how much he produces per game compared to the crew, his win %, and MVPs. After you save, ratings keep moving with every game.</p>
-      <button type="button" class="btn ghost block" data-a="use-stat-ratings" ${Object.keys(fromStats).length ? '' : 'disabled'}>📊 Use the stat rating for everyone</button>
+      <button type="button" class="btn ghost block" data-a="use-stat-ratings" ${Object.keys(fromStats).length ? '' : 'disabled'}>Use the stat rating for everyone</button>
       <form data-f="ratings" class="form rate-list">
         ${list.map((p) => {
           const cur = ovr(p.id);
@@ -1127,7 +1158,7 @@ function viewRatings() {
               : '📊 Needs 2+ games for a stat rating'}</div>
           </div>`;
         }).join('')}
-        <button class="btn hot block">💾 Save ratings</button>
+        <button class="btn hot block">Save ratings</button>
       </form>
     </section>`;
 }
@@ -1354,7 +1385,7 @@ async function boot() {
     S.auth = auth;
     if (auth.required && !auth.ok) {
       $('#view').innerHTML = `
-        <section class="hero"><div class="hero-logo">HFL</div><p class="hero-tag">Members only.</p></section>
+        <section class="hero"><div class="hero-kicker">Crew only</div><div class="hero-logo">HFL</div><p class="hero-tag">Members only. Type the crew passcode.</p></section>
         <section class="card">
           <form data-f="passcode" class="form">
             <label>Crew passcode <input name="pass" type="password" required autocomplete="current-password" autofocus></label>
@@ -1373,7 +1404,7 @@ async function boot() {
     }
     render();
   } catch (e) {
-    $('#view').innerHTML = `<section class="card center"><h2>Can't reach the HFL server</h2><p class="muted">${h(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button></section>`;
+    $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach the HFL server', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
   }
 }
 

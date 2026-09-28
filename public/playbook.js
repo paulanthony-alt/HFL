@@ -238,8 +238,8 @@ export class PlayEditor {
       <label>Play name <input data-name maxlength="60" placeholder="e.g. Mesh Madness" value="${esc(p.name)}"></label>
       <label>Notes <textarea data-notes maxlength="600" rows="3" placeholder="Reads, who's the first look, what to do if they blitz…">${esc(p.notes)}</textarea></label>
       <div class="pb-row">
-        <button type="button" class="btn hot grow" data-act="save">💾 Save to playbook</button>
-        ${this.play.id ? `<button type="button" class="btn ghost" data-act="share">📤 Share</button>` : ''}
+        <button type="button" class="btn hot grow" data-act="save">Save to playbook</button>
+        ${this.play.id ? `<button type="button" class="btn ghost" data-act="share">Share</button>` : ''}
         ${this.play.id ? `<button type="button" class="btn ghost danger" data-act="delete">🗑</button>` : ''}
       </div>`;
     this.bind();
