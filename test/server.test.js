@@ -136,7 +136,7 @@ test('passcode locks the API', async () => {
     assert.equal((await fetch(b2 + '/api/state')).status, 401);
     assert.equal((await fetch(b2 + '/api/state', { headers: { 'x-hfl-pass': 'nope' } })).status, 401);
     assert.equal((await fetch(b2 + '/api/state', { headers: { 'x-hfl-pass': 'blitz' } })).status, 200);
-    assert.deepEqual(await (await fetch(b2 + '/api/auth')).json(), { required: true, ok: false });
+    assert.deepEqual(await (await fetch(b2 + '/api/auth')).json(), { required: true, ok: false, managedBy: 'server' });
   } finally {
     s2.closeAllConnections();
     s2.close();
@@ -158,5 +158,40 @@ test('demo seed loads only into an empty league', async () => {
     s3.closeAllConnections();
     s3.close();
     fs.rmSync(d3, { recursive: true, force: true });
+  }
+});
+
+test('rate players endpoint stores dated edits and moves the rating', async () => {
+  const { db } = await call('GET', '/api/state');
+  const p = db.players[0];
+  const r = await call('POST', '/api/ratings', { ratings: { [p.id]: 93 } });
+  assert.equal(r.status, 200);
+  assert.equal(r.db.players[0].ratingEdits.at(-1).ovr, 93);
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: 150 } })).status, 400);
+});
+
+test('passcode set in the app locks everything, survives restart, and can be removed', async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-apppass-'));
+  const start = async () => { const s = createHflServer({ dataDir: d, passcode: '' }); await new Promise((r) => s.listen(0, r)); return s; };
+  const stop = (s) => { s.closeAllConnections(); s.close(); };
+  let s = await start();
+  let b = `http://localhost:${s.address().port}`;
+  const post = (url, body, pass = '') => fetch(b + url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hfl-pass': pass }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await fetch(b + '/api/state')).status, 200);
+    assert.equal((await post('/api/passcode', { passcode: '12' })).status, 400, 'too short');
+    assert.equal((await post('/api/passcode', { passcode: '6767' })).status, 200);
+    assert.equal((await fetch(b + '/api/state')).status, 401);
+    assert.equal((await fetch(b + '/api/state', { headers: { 'x-hfl-pass': '6767' } })).status, 200);
+    assert.ok(!fs.readFileSync(path.join(d, 'auth.json'), 'utf8').includes('6767'), 'only a hash is stored');
+
+    stop(s); s = await start(); b = `http://localhost:${s.address().port}`;
+    assert.equal((await fetch(b + '/api/state')).status, 401, 'still locked after restart');
+    assert.equal((await post('/api/passcode', { passcode: '' }, 'wrong')).status, 401, 'need the code to change it');
+    assert.equal((await post('/api/passcode', { passcode: '' }, '6767')).status, 200);
+    assert.equal((await fetch(b + '/api/state')).status, 200, 'unlocked again');
+  } finally {
+    stop(s);
+    fs.rmSync(d, { recursive: true, force: true });
   }
 });

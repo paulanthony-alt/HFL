@@ -8,12 +8,13 @@ const DEF_COLOR = '#ff4d6d';
 const o = (id, label, x, y, color) => ({ id, label, side: 'O', x, y, color });
 const d = (id, label, x, y) => ({ id, label, side: 'D', x, y, color: DEF_COLOR });
 
+// 5v5, no center: the QB takes the snap himself and four receivers go out.
 export const FORMATIONS = {
-  spread: { name: 'Spread', players: [o('o1', 'QB', 50, 92, OFF_COLORS[0]), o('o2', 'C', 50, 80, OFF_COLORS[1]), o('o3', 'X', 12, 80, OFF_COLORS[2]), o('o4', 'Z', 88, 80, OFF_COLORS[3]), o('o5', 'S', 70, 82, OFF_COLORS[4])] },
-  trips: { name: 'Trips', players: [o('o1', 'QB', 50, 92, OFF_COLORS[0]), o('o2', 'C', 50, 80, OFF_COLORS[1]), o('o3', 'X', 10, 80, OFF_COLORS[2]), o('o4', 'Y', 70, 81, OFF_COLORS[3]), o('o5', 'Z', 88, 80, OFF_COLORS[4])] },
-  stack: { name: 'Stack', players: [o('o1', 'QB', 50, 92, OFF_COLORS[0]), o('o2', 'C', 50, 80, OFF_COLORS[1]), o('o3', 'X', 20, 80, OFF_COLORS[2]), o('o4', 'Y', 80, 80, OFF_COLORS[3]), o('o5', 'Z', 80, 86, OFF_COLORS[4])] },
-  bunch: { name: 'Bunch', players: [o('o1', 'QB', 50, 92, OFF_COLORS[0]), o('o2', 'C', 50, 80, OFF_COLORS[1]), o('o3', 'X', 72, 80, OFF_COLORS[2]), o('o4', 'Y', 78, 84, OFF_COLORS[3]), o('o5', 'Z', 84, 80, OFF_COLORS[4])] },
-  backfield: { name: 'Shotgun RB', players: [o('o1', 'QB', 50, 92, OFF_COLORS[0]), o('o2', 'C', 50, 80, OFF_COLORS[1]), o('o3', 'X', 12, 80, OFF_COLORS[2]), o('o4', 'Z', 88, 80, OFF_COLORS[3]), o('o5', 'RB', 60, 93, OFF_COLORS[4])] },
+  spread: { name: 'Spread (2x2)', players: [o('o1', 'QB', 50, 86, OFF_COLORS[0]), o('o2', 'X', 8, 80, OFF_COLORS[2]), o('o3', 'H', 30, 81, OFF_COLORS[3]), o('o4', 'Y', 70, 81, OFF_COLORS[4]), o('o5', 'Z', 92, 80, OFF_COLORS[5])] },
+  trips: { name: 'Trips', players: [o('o1', 'QB', 50, 86, OFF_COLORS[0]), o('o2', 'X', 8, 80, OFF_COLORS[2]), o('o3', 'H', 62, 81, OFF_COLORS[3]), o('o4', 'Y', 77, 81, OFF_COLORS[4]), o('o5', 'Z', 92, 80, OFF_COLORS[5])] },
+  stack: { name: 'Double Stack', players: [o('o1', 'QB', 50, 86, OFF_COLORS[0]), o('o2', 'X', 20, 80, OFF_COLORS[2]), o('o3', 'H', 20, 86, OFF_COLORS[3]), o('o4', 'Y', 80, 86, OFF_COLORS[4]), o('o5', 'Z', 80, 80, OFF_COLORS[5])] },
+  bunch: { name: 'Bunch', players: [o('o1', 'QB', 50, 86, OFF_COLORS[0]), o('o2', 'X', 8, 80, OFF_COLORS[2]), o('o3', 'H', 70, 80, OFF_COLORS[3]), o('o4', 'Y', 76, 85, OFF_COLORS[4]), o('o5', 'Z', 82, 80, OFF_COLORS[5])] },
+  quads: { name: 'Quads', players: [o('o1', 'QB', 50, 86, OFF_COLORS[0]), o('o2', 'X', 58, 81, OFF_COLORS[2]), o('o3', 'H', 70, 80, OFF_COLORS[3]), o('o4', 'Y', 81, 81, OFF_COLORS[4]), o('o5', 'Z', 92, 80, OFF_COLORS[5])] },
 };
 export const DEFENSES = {
   none: { name: 'No defense', players: [] },

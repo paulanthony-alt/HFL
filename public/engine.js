@@ -3,7 +3,8 @@
 
 export const DEFAULT_ELO = 1000;
 export const K_FACTOR = 32;
-export const POSITIONS = ['QB', 'WR', 'C', 'RB', 'DB', 'LB', 'RUSH', 'ATH'];
+// No centers in the HFL: the QB snaps it himself and four receivers go out.
+export const POSITIONS = ['QB', 'WR', 'RB', 'DB', 'LB', 'RUSH', 'ATH'];
 
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -141,6 +142,8 @@ export const sortGames = (games) => [...games].sort((a, b) => (gameSortKey(a) < 
 
 // Replays every finished game in order to derive current ratings. Ratings are never
 // stored, so fixing a stat or deleting a game later keeps everything consistent.
+// Manual ratings (player.ratingEdits: [{ at, ovr }]) are replayed too: an edit sets
+// the player's rating at that moment, and games finished afterwards move it from there.
 export function computeLeague(db) {
   const elo = {};
   const history = {};
@@ -151,8 +154,22 @@ export function computeLeague(db) {
   const ensure = (id) => {
     if (elo[id] === undefined) { elo[id] = DEFAULT_ELO; history[id] = [{ gameId: null, date: '', elo: DEFAULT_ELO, delta: 0 }]; }
   };
+  const pending = (db.players || [])
+    .flatMap((p) => (p.ratingEdits || []).map((e) => ({ id: p.id, at: e.at, ovr: e.ovr })))
+    .sort((a, b) => (a.at < b.at ? -1 : 1));
+  const applyEditsBefore = (time) => {
+    while (pending.length && pending[0].at < time) {
+      const e = pending.shift();
+      ensure(e.id);
+      const next = ovrToElo(e.ovr);
+      history[e.id].push({ gameId: null, date: e.at.slice(0, 10), elo: next, delta: next - elo[e.id], edit: true });
+      elo[e.id] = next;
+    }
+  };
   const games = {};
   for (const g of sortGames(db.games || [])) {
+    // Finished games count from when they ended; games not played yet see every edit.
+    applyEditsBefore(g.status === 'final' ? g.endedAt || `${g.date}T23:59:59` : '9999');
     const summary = summarizeGame(g);
     const info = { summary, ratingChanges: null, mvp: null, winProbA: null };
     const A = g.teams?.A || [];
@@ -185,8 +202,27 @@ export function computeLeague(db) {
     }
     games[g.id] = info;
   }
+  applyEditsBefore('9999');
   const ovr = Object.fromEntries(Object.entries(elo).map(([id, e]) => [id, eloToOvr(e)]));
   return { elo, ovr, history, games };
+}
+
+// What the stats say each player's rating should be, from a stat table (usually career).
+// Compares production per game to the rest of the crew, then adds winning and MVPs.
+export function statRatings(table, { minGames = 2 } = {}) {
+  const rows = Object.entries(table).filter(([, s]) => s.gp >= minGames);
+  if (!rows.length) return {};
+  const ipg = rows.map(([, s]) => impactOf(s) / s.gp);
+  const avg = mean(ipg);
+  const sd = Math.sqrt(mean(ipg.map((x) => (x - avg) ** 2))) || 1;
+  const out = {};
+  rows.forEach(([id, s], i) => {
+    const z = (ipg[i] - avg) / sd;
+    const winPct = (s.w + s.t / 2) / s.gp;
+    const score = 70 + z * 8 + (winPct - 0.5) * 16 + (s.mvps / s.gp) * 10;
+    out[id] = { ovr: Math.round(clamp(score, 40, 99)), gp: s.gp };
+  });
+  return out;
 }
 
 // Season (or career, season = null) totals per player, from finished games only.

@@ -419,3 +419,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--hot); outli
   .sb-score { font-size: 52px; }
   .tabs a { font-size: 10px; }
 }
+
+/* ---------- rate players */
+.rate-list { gap: 0; }
+.rate-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.rate-row.changed { background: linear-gradient(90deg, rgba(255,107,26,0.1), transparent); margin: 0 -16px; padding: 12px 16px; }
+.rate-head { display: flex; align-items: center; gap: 8px; }
+.rate-now { margin-left: auto; }
+.rate-ctl { display: flex; align-items: center; gap: 12px; margin: 6px 0 2px; }
+.rate-ctl input { flex: 1; height: 32px; }
+.rate-val { width: 44px; text-align: right; font-family: var(--display); font-size: 30px; line-height: 1; color: var(--edge); }
+.linkish { background: none; border: 0; padding: 0; color: var(--hot2); font-weight: 800; text-decoration: underline; }

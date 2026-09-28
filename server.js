@@ -173,6 +173,20 @@ function buildRoutes(ctx) {
     return db.players[i];
   });
 
+  // Manual ratings: { ratings: { playerId: ovr } }. Stored as dated edits so games
+  // played afterwards keep moving the rating from the new number.
+  on('POST', '/api/ratings', (db, b) => {
+    const entries = Object.entries(b.ratings || {});
+    if (!entries.length) throw bad('no ratings to save');
+    const at = now();
+    for (const [id, value] of entries) {
+      const p = player(db, id);
+      const ovr = num(value, 40, 99, { name: `${p.name}'s rating`, int: true });
+      p.ratingEdits = [...(p.ratingEdits || []), { at, ovr }].slice(-50);
+    }
+    return entries.length;
+  });
+
   // --- games
   on('POST', '/api/games', (db, b) => {
     const date = str(b.date, 10, { required: true, name: 'date' });
@@ -375,8 +389,35 @@ function buildRoutes(ctx) {
 // ---------------------------------------------------------------------------
 // Server
 
+// Crew passcode set from inside the app. Kept out of db.json (so backups never carry
+// it) and stored as a salted scrypt hash, never the passcode itself.
+function passcodeStore(dataDir) {
+  const file = path.join(dataDir, 'auth.json');
+  let saved = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+  const verified = new Set(); // hashing is slow on purpose; remember codes that already matched
+  return {
+    isSet: () => !!saved,
+    check(given) {
+      if (!saved) return true;
+      if (verified.has(given)) return true;
+      const hash = crypto.scryptSync(String(given), Buffer.from(saved.salt, 'hex'), 32);
+      const ok = crypto.timingSafeEqual(hash, Buffer.from(saved.hash, 'hex'));
+      if (ok) verified.add(given);
+      return ok;
+    },
+    set(code) {
+      verified.clear();
+      if (!code) { saved = null; fs.rmSync(file, { force: true }); return; }
+      const salt = crypto.randomBytes(16);
+      saved = { salt: salt.toString('hex'), hash: crypto.scryptSync(code, salt, 32).toString('hex') };
+      fs.writeFileSync(file, JSON.stringify(saved));
+    },
+  };
+}
+
 export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = process.env.HFL_PASSCODE || '' } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
+  const appPass = passcodeStore(dataDir);
   const dbFile = path.join(dataDir, 'db.json');
   let db = fs.existsSync(dbFile) ? { ...emptyDb(), ...JSON.parse(fs.readFileSync(dbFile, 'utf8')) } : emptyDb();
 
@@ -395,11 +436,15 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
 
   const routes = buildRoutes({ dataDir });
 
+  // HFL_PASSCODE on the server wins; otherwise whatever was set in the app (if anything).
+  const passRequired = () => !!passcode || appPass.isSet();
   const authed = (req, url) => {
-    if (!passcode) return true;
-    const given = req.headers['x-hfl-pass'] || url.searchParams.get('pass') || '';
-    const a = Buffer.from(String(given)), b = Buffer.from(passcode);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
+    const given = String(req.headers['x-hfl-pass'] || url.searchParams.get('pass') || '');
+    if (passcode) {
+      const a = Buffer.from(given), b = Buffer.from(passcode);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    }
+    return appPass.check(given);
   };
 
   const send = (res, status, body) => {
@@ -435,8 +480,18 @@ export function createHflServer({ dataDir = path.join(ROOT, 'data'), passcode = 
     const p = decodeURIComponent(url.pathname);
     try {
       if (p.startsWith('/api/')) {
-        if (p === '/api/auth') return send(res, 200, { required: !!passcode, ok: authed(req, url) });
+        if (p === '/api/auth') return send(res, 200, { required: passRequired(), ok: authed(req, url), managedBy: passcode ? 'server' : 'app' });
         if (!authed(req, url)) return send(res, 401, { error: 'wrong crew passcode' });
+        if (req.method === 'POST' && p === '/api/passcode') {
+          if (passcode) throw bad('the passcode is set on the server (HFL_PASSCODE), change it there');
+          const body = await readBody(req);
+          const code = str(body.passcode, 32, { name: 'passcode' });
+          if (code && code.length < 4) throw bad('passcode needs at least 4 characters');
+          appPass.set(code);
+          // Tell every open phone to re-check, so they get asked for the new code.
+          for (const c of clients) c.write('event: auth\ndata: {}\n\n');
+          return send(res, 200, { ok: true, required: passRequired() });
+        }
         if (req.method === 'GET' && p === '/api/state') return send(res, 200, { db });
         if (req.method === 'GET' && p === '/api/export') {
           res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="hfl-backup.json"' });

@@ -10,7 +10,7 @@ const lsGet = (k) => { try { return localStorage.getItem(k) || ''; } catch { ret
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* private mode */ } };
 
 const S = {
-  db: null, league: null,
+  db: null, league: null, auth: null, es: null,
   me: lsGet('hfl.me'), pass: lsGet('hfl.pass'),
   season: null, statTab: 'mvp', fameTab: 'best',
   log: null, editor: null, editorHash: null, after: null, pending: false, lastPath: null,
@@ -113,23 +113,30 @@ function setDb(db, { remote = false } = {}) {
 
 async function loadState(remote = false) {
   const res = await fetch('/api/state', { headers: { 'x-hfl-pass': S.pass } });
+  if (res.status === 401 && S.db) return boot(); // passcode changed under us → ask for the new one
   if (!res.ok) throw new Error('Could not load the league');
   const { db } = await res.json();
   if (!S.db || db.version !== S.db.version) setDb(db, { remote });
 }
 
 function connectStream() {
-  const es = new EventSource(`/api/stream?pass=${encodeURIComponent(S.pass)}`);
+  S.es?.close();
+  const es = (S.es = new EventSource(`/api/stream?pass=${encodeURIComponent(S.pass)}`));
   es.addEventListener('change', (e) => {
     const { version } = JSON.parse(e.data);
     if (!S.db || version !== S.db.version) loadState(true).catch(() => {});
   });
+  es.addEventListener('auth', () => loadState(true).catch(() => {}));
   es.onopen = () => $('#live-dot').classList.add('on');
-  es.onerror = () => $('#live-dot').classList.remove('on');
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') loadState(true).catch(() => {});
-  });
+  es.onerror = () => {
+    $('#live-dot').classList.remove('on');
+    // A rejected passcode closes the stream for good; retry with whatever code we have now.
+    if (es.readyState === EventSource.CLOSED && S.es === es) setTimeout(() => S.es === es && connectStream(), 3000);
+  };
 }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.db) loadState(true).catch(() => {});
+});
 
 const isTyping = () => {
   const a = document.activeElement;
@@ -161,6 +168,7 @@ const ROUTES = [
   [/^#\/fame$/, viewFame, 'fame'],
   [/^#\/fame\/new$/, viewFameNew, 'fame'],
   [/^#\/me$/, viewMe, ''],
+  [/^#\/ratings$/, viewRatings, ''],
   [/^#\/settings$/, viewSettings, ''],
 ];
 
@@ -630,7 +638,7 @@ function viewStats() {
       const last = hist[hist.length - 1];
       return last?.delta ? deltaTag(last.delta) : '—';
     }]];
-    note = 'Ratings move after every game: beat the odds and they go up.';
+    note = 'Ratings move after every game: beat the odds and they go up. <a href="#/ratings">Rate players ›</a>';
   }
   return `
     <div class="page-head">
@@ -791,7 +799,7 @@ function viewEditPlayer(id) {
         <label>Starting rating: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>
-        <p class="muted small">Be honest. The app only uses this as a starting point — after that, his rating moves with every game he plays. 70 is an average dude.</p>
+        <p class="muted small">${p ? 'This is where he started before any games. To change his rating now, use <a href="#/ratings">Rate players</a>.' : 'Be honest. The app only uses this as a starting point. After that, his rating moves with every game he plays. 70 is an average dude.'}</p>
         ${p ? `<label class="check"><input type="checkbox" name="retired" ${p.active === false ? 'checked' : ''}> Retired (hide from RSVPs and cards, keep his stats)</label>` : ''}
         <button class="btn hot block">${p ? 'Save' : '+ Add to the league'}</button>
       </form>
@@ -1060,6 +1068,22 @@ function viewSettings() {
       ${players.length ? '' : `<button class="btn ghost block" data-a="seed-demo">👀 Load demo crew</button>`}
     </section>
     <section class="card">
+      <div class="row-between"><h3>⭐ Rate players</h3><a class="btn sm hot" href="#/ratings">Open ›</a></div>
+      <p class="muted small">Set everyone's rating yourself, or let the stats decide.</p>
+    </section>
+    <section class="card">
+      <h3>🔒 Crew passcode</h3>
+      ${S.auth?.managedBy === 'server' ? `<p class="muted small">This passcode is set on the server (the HFL_PASSCODE setting), so change it there.</p>` : `
+        <p class="muted small">${S.auth?.required
+          ? 'The app is locked. Each phone types the passcode once and it’s remembered.'
+          : 'Right now anyone with the link can get in and edit. Set a passcode to lock it to the crew.'}</p>
+        <form data-f="passcode-set" class="form">
+          <label>${S.auth?.required ? 'New passcode' : 'Passcode'} <input name="code" required minlength="4" maxlength="32" autocomplete="new-password" placeholder="at least 4 characters"></label>
+          <button class="btn">🔒 ${S.auth?.required ? 'Change' : 'Set'} passcode</button>
+        </form>
+        ${S.auth?.required ? `<button class="btn ghost block danger" data-a="remove-pass">Remove passcode</button>` : ''}`}
+    </section>
+    <section class="card">
       <h3>Backup</h3>
       <p class="muted small">Download everything (players, games, stats, plays, posts) as one file. Restore it on any HFL server.</p>
       <div class="btn-row">
@@ -1073,6 +1097,57 @@ function viewSettings() {
       ${S.pass ? `<button class="btn ghost block" data-a="forget-pass">Forget crew passcode</button>` : ''}
       <p class="muted small">Tip: in your phone's browser menu, choose “Add to Home Screen” to use the HFL like a real app.</p>
     </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Rate players
+
+function viewRatings() {
+  const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
+  const fromStats = E.statRatings(E.seasonTable(S.db, S.league, null));
+  return `
+    <a class="back" href="#/settings">‹ Settings</a>
+    <section class="card">
+      <h2>Rate players</h2>
+      <p class="muted">Drag to set anyone's rating (40–99), then save. <b>📊 Stats say</b> is the app's rating from every logged game: how much he produces per game compared to the crew, his win %, and MVPs. After you save, ratings keep moving with every game.</p>
+      <button type="button" class="btn ghost block" data-a="use-stat-ratings" ${Object.keys(fromStats).length ? '' : 'disabled'}>📊 Use the stat rating for everyone</button>
+      <form data-f="ratings" class="form rate-list">
+        ${list.map((p) => {
+          const cur = ovr(p.id);
+          const sg = fromStats[p.id];
+          return `
+          <div class="rate-row">
+            <div class="rate-head">${avatar(p.id, 'xs')} <b>${h(p.name)}</b>${p.nickname ? ` <span class="muted small">“${h(p.nickname)}”</span>` : ''}<span class="rate-now muted small">now ${cur}</span></div>
+            <div class="rate-ctl">
+              <input type="range" min="40" max="99" value="${cur}" data-pid="${p.id}" data-cur="${cur}" data-ch="rate" aria-label="${h(p.name)} rating">
+              <output class="rate-val tier-${tier(cur)}">${cur}</output>
+            </div>
+            <div class="muted small">${sg
+              ? `📊 Stats say <button type="button" class="linkish" data-a="use-stat" data-p="${p.id}" data-v="${sg.ovr}">${sg.ovr}</button> <span>(${sg.gp} games · tap to use)</span>`
+              : '📊 Needs 2+ games for a stat rating'}</div>
+          </div>`;
+        }).join('')}
+        <button class="btn hot block">💾 Save ratings</button>
+      </form>
+    </section>`;
+}
+
+function setRateSlider(input, value) {
+  input.value = value;
+  CHANGE.rate(input);
+}
+
+async function setPasscode(code) {
+  const old = S.pass;
+  const req = fetch('/api/passcode', { method: 'POST', headers: { 'content-type': 'application/json', 'x-hfl-pass': old }, body: JSON.stringify({ passcode: code }) });
+  S.pass = code; // switch now so the "passcode changed" ping doesn't lock this phone out
+  const res = await req;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { S.pass = old; throw new Error(data.error || 'Could not change the passcode'); }
+  lsSet('hfl.pass', code);
+  S.auth = { ...S.auth, required: data.required };
+  connectStream();
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,6 +1214,13 @@ const A = {
   'stat-tab': ({ t }) => { S.statTab = t; render(); },
   'fame-tab': ({ t }) => { S.fameTab = t; render(); },
   flip: (_, el) => el.classList.toggle('flipped'),
+  'use-stat': ({ p, v }) => setRateSlider($(`input[data-pid="${p}"][data-ch=rate]`), v),
+  'use-stat-ratings': () => {
+    const fromStats = E.statRatings(E.seasonTable(S.db, S.league, null));
+    document.querySelectorAll('input[data-ch=rate]').forEach((el) => fromStats[el.dataset.pid] && setRateSlider(el, fromStats[el.dataset.pid].ovr));
+    toast('Filled in the stat ratings. Hit Save to lock them in.');
+  },
+  'remove-pass': () => confirm('Remove the passcode? Anyone with the link will be able to get in.') && run(() => setPasscode(''), 'Passcode removed'),
   'forget-pass': () => { S.pass = ''; lsSet('hfl.pass', ''); toast('Passcode forgotten on this phone'); render(); },
 };
 
@@ -1155,6 +1237,13 @@ function submitLog({ p1, p2 }) {
 }
 
 const CHANGE = {
+  rate: (el) => {
+    const v = Number(el.value);
+    const out = el.parentElement.querySelector('output');
+    out.textContent = v;
+    out.className = `rate-val tier-${tier(v)}`;
+    el.closest('.rate-row').classList.toggle('changed', v !== Number(el.dataset.cur));
+  },
   season: (el) => { S.season = el.value; render(); },
   'range-out': (el) => { const out = el.form.querySelector(`[data-out="${el.name}"]`); if (out) out.textContent = el.value; },
   import: (el) => {
@@ -1168,6 +1257,19 @@ const CHANGE = {
 };
 
 const FORMS = {
+  ratings: (d, form) => {
+    const ratings = {};
+    form.querySelectorAll('input[data-ch=rate]').forEach((el) => {
+      if (Number(el.value) !== Number(el.dataset.cur)) ratings[el.dataset.pid] = Number(el.value);
+    });
+    const n = Object.keys(ratings).length;
+    if (!n) return toast('No ratings changed');
+    run(() => api('POST', '/api/ratings', { ratings }), `⭐ Saved ${n} rating${n > 1 ? 's' : ''}`);
+  },
+  'passcode-set': (d, form) => {
+    const code = d.code.trim();
+    run(() => setPasscode(code), `🔒 Passcode set. Tell the crew: it's what you just typed`).then(() => form.reset?.());
+  },
   passcode: async (d) => {
     S.pass = d.pass.trim();
     lsSet('hfl.pass', S.pass);
@@ -1232,8 +1334,8 @@ document.addEventListener('change', (e) => {
   if (el && CHANGE[el.dataset.ch]) CHANGE[el.dataset.ch](el);
 });
 document.addEventListener('input', (e) => {
-  const el = e.target.closest('[data-ch="range-out"]');
-  if (el) CHANGE['range-out'](el);
+  const el = e.target.closest('[data-ch="range-out"], [data-ch="rate"]');
+  if (el) CHANGE[el.dataset.ch](el);
 });
 document.addEventListener('submit', (e) => {
   const form = e.target.closest('form[data-f]');
@@ -1249,6 +1351,7 @@ document.addEventListener('submit', (e) => {
 async function boot() {
   try {
     const auth = await fetch('/api/auth', { headers: { 'x-hfl-pass': S.pass } }).then((r) => r.json());
+    S.auth = auth;
     if (auth.required && !auth.ok) {
       $('#view').innerHTML = `
         <section class="hero"><div class="hero-logo">HFL</div><p class="hero-tag">Members only.</p></section>
@@ -1262,6 +1365,7 @@ async function boot() {
       return;
     }
     await loadState();
+    if (boot.started) connectStream(); // passcode may have changed; reconnect with the current one
     if (!boot.started) {
       boot.started = true;
       connectStream();

@@ -142,3 +142,34 @@ test('balanceTeams works for big turnouts', () => {
   assert.equal(r.A.length, 12);
   assert.ok(r.diff < 20);
 });
+
+test('manual rating edits set the rating, and later games move it from there', () => {
+  const players = ['qa', 'wa', 'xa', 'qb', 'wb', 'xb'].map((id) => ({ id, startOvr: 70 }));
+  players[0].ratingEdits = [{ at: '2026-09-05T00:00:00.000Z', ovr: 90 }];
+  const g = game({ endedAt: '2026-09-10T00:00:00.000Z', events: [ev('rush_td', 'xa', null, 'A')] });
+  const L = E.computeLeague({ players, games: [g] });
+  assert.ok(L.elo.qa > E.ovrToElo(90), 'won after being set to 90');
+  assert.ok(L.games.g1.winProbA > 0.5, 'the 90 counted when the game was played');
+
+  // An edit made after the game overrides it outright
+  players[0].ratingEdits.push({ at: '2026-09-20T00:00:00.000Z', ovr: 55 });
+  assert.equal(E.computeLeague({ players, games: [g] }).ovr.qa, 55);
+});
+
+test('statRatings: producers and winners rate higher, needs 2+ games', () => {
+  const s = (o) => ({ ...E.blankStats(), ...o });
+  const t = {
+    star: s({ gp: 4, w: 4, recTD: 6, rec: 12, mvps: 2 }),
+    avg: s({ gp: 4, w: 2, l: 2, rec: 5, recTD: 1 }),
+    butter: s({ gp: 4, l: 4, drops: 6, rec: 1 }),
+    rookie: s({ gp: 1, w: 1, recTD: 3 }),
+  };
+  const r = E.statRatings(t);
+  assert.ok(r.star.ovr > r.avg.ovr && r.avg.ovr > r.butter.ovr);
+  assert.equal(r.rookie, undefined);
+  for (const x of Object.values(r)) assert.ok(x.ovr >= 40 && x.ovr <= 99);
+});
+
+test('no centers: C is not a position', () => {
+  assert.ok(!E.POSITIONS.includes('C'));
+});

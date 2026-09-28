@@ -5,7 +5,7 @@ import { balanceTeams, computeLeague } from './public/engine.js';
 const CREW = [
   ['Marcus Hill', 'Slingshot', 'QB', 84, '🎯', '#ff6b1a', 7],
   ['Devon Price', 'Glue Hands', 'WR', 81, '🧤', '#35c7ff', 11],
-  ['Tyler Brooks', 'The Wall', 'C', 72, '🧱', '#9aa4b2', 55],
+  ['Tyler Brooks', 'The Wall', 'WR', 72, '🧱', '#9aa4b2', 55],
   ['Andre Coleman', 'Jet', 'WR', 86, '⚡', '#ffd23f', 1],
   ['Chris Nguyen', 'Ball Hawk', 'DB', 80, '🦅', '#7cff6b', 24],
   ['Jake Morales', 'Butterfingers', 'WR', 63, '🧈', '#f7a8ff', 88],
@@ -102,21 +102,19 @@ export function buildDemo(newId, season) {
   db.posts[0].reactions = { '😂': [P.Slingshot, P.Blitz, P.Wheels], '🔥': [P['Ball Hawk']] };
   db.posts[3].reactions = { '💀': [P.Jet, P['Glue Hands'], P.Cleats, P.Butterfingers] };
 
+  const wr = (id, label, x, y, color) => ({ id, label, side: 'O', x, y, color });
   db.plays.push({
     id: newId(), name: 'Mesh Madness', formation: 'spread', authorId: P.Slingshot,
-    notes: 'Jet and Glue Hands cross at 5 yards. Hit whoever comes open first. Center leaks to the flat.',
+    notes: 'H and Y cross underneath at 5 yards. X runs a post to clear the middle. Z is the check-down on the out.',
     players: [
-      { id: 'o1', label: 'QB', side: 'O', x: 50, y: 92, color: '#ffffff' },
-      { id: 'o2', label: 'C', side: 'O', x: 50, y: 80, color: '#9aa4b2' },
-      { id: 'o3', label: 'X', side: 'O', x: 12, y: 80, color: '#ff6b1a' },
-      { id: 'o4', label: 'Z', side: 'O', x: 88, y: 80, color: '#35c7ff' },
-      { id: 'o5', label: 'S', side: 'O', x: 70, y: 82, color: '#ffd23f' },
+      wr('o1', 'QB', 50, 86, '#ffffff'), wr('o2', 'X', 8, 80, '#ff6b1a'), wr('o3', 'H', 30, 81, '#35c7ff'),
+      wr('o4', 'Y', 70, 81, '#ffd23f'), wr('o5', 'Z', 92, 80, '#7cff6b'),
     ],
     routes: [
-      { id: 'r1', pid: 'o3', style: 'route', points: [[12, 80], [18, 72], [80, 70]] },
-      { id: 'r2', pid: 'o4', style: 'route', points: [[88, 80], [82, 74], [20, 72]] },
-      { id: 'r3', pid: 'o5', style: 'route', points: [[70, 82], [70, 50], [85, 38]] },
-      { id: 'r4', pid: 'o2', style: 'route', points: [[50, 80], [52, 74], [30, 70]] },
+      { id: 'r1', pid: 'o2', style: 'route', points: [[8, 80], [8, 60], [34, 40]] },
+      { id: 'r2', pid: 'o3', style: 'route', points: [[30, 81], [36, 74], [80, 72]] },
+      { id: 'r3', pid: 'o4', style: 'route', points: [[70, 81], [64, 75], [20, 73]] },
+      { id: 'r4', pid: 'o5', style: 'route', points: [[92, 80], [92, 68], [99, 68]] },
     ],
     createdAt: '2026-09-10T12:00:00.000Z', updatedAt: '2026-09-10T12:00:00.000Z',
   });
@@ -124,18 +122,15 @@ export function buildDemo(newId, season) {
     id: newId(), name: 'Jet Sweep Double Move', formation: 'trips', authorId: P.Jet,
     notes: 'Motion Jet across, fake the sweep, he runs a wheel. Slingshot pump fakes the flat.',
     players: [
-      { id: 'o1', label: 'QB', side: 'O', x: 50, y: 92, color: '#ffffff' },
-      { id: 'o2', label: 'C', side: 'O', x: 50, y: 80, color: '#9aa4b2' },
-      { id: 'o3', label: 'J', side: 'O', x: 10, y: 80, color: '#ffd23f' },
-      { id: 'o4', label: 'Y', side: 'O', x: 72, y: 81, color: '#35c7ff' },
-      { id: 'o5', label: 'Z', side: 'O', x: 88, y: 80, color: '#ff6b1a' },
+      wr('o1', 'QB', 50, 86, '#ffffff'), wr('o2', 'J', 8, 80, '#ffd23f'), wr('o3', 'H', 62, 81, '#35c7ff'),
+      wr('o4', 'Y', 77, 81, '#ff6b1a'), wr('o5', 'Z', 92, 80, '#7cff6b'),
     ],
     routes: [
-      { id: 'r1', pid: 'o3', style: 'motion', points: [[10, 80], [40, 86]] },
-      { id: 'r2', pid: 'o3', style: 'route', points: [[40, 86], [66, 84], [80, 70], [82, 22]] },
-      { id: 'r3', pid: 'o4', style: 'route', points: [[72, 81], [72, 60], [60, 52]] },
-      { id: 'r4', pid: 'o5', style: 'route', points: [[88, 80], [88, 64], [96, 56]] },
-      { id: 'r5', pid: 'o2', style: 'block', points: [[50, 80], [50, 74]] },
+      { id: 'r1', pid: 'o2', style: 'motion', points: [[8, 80], [40, 84]] },
+      { id: 'r2', pid: 'o2', style: 'route', points: [[40, 84], [58, 86], [72, 72], [74, 22]] },
+      { id: 'r3', pid: 'o3', style: 'route', points: [[62, 81], [62, 62], [50, 54]] },
+      { id: 'r4', pid: 'o4', style: 'route', points: [[77, 81], [77, 66], [88, 58]] },
+      { id: 'r5', pid: 'o5', style: 'route', points: [[92, 80], [92, 40]] },
     ],
     createdAt: '2026-09-14T12:00:00.000Z', updatedAt: '2026-09-14T12:00:00.000Z',
   });
