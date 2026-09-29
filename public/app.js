@@ -33,7 +33,7 @@ const ovr = (id) => S.league.ovr[id] ?? E.eloToOvr(E.ovrToElo(P(id).startOvr));
 const me = () => (S.me && S.db.players.some((p) => p.id === S.me) ? S.me : null);
 const initials = (name) => name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 // Card photos: uploaded ones (p.photo), else a built-in one shipped with the app.
-const DEFAULT_PHOTOS = { ben: '/photos/ben.jpg' };
+const DEFAULT_PHOTOS = { ben: '/photos/ben.jpg', kellen: '/photos/kellen.jpg' };
 const photoOf = (p) => p?.photo || DEFAULT_PHOTOS[String(p?.name || '').trim().toLowerCase()] || null;
 // Style + attributes that paint a photo as an element's background. Photos kept in
 // Firestore ("fsimg:") are filled in after render by hydrateImages().
