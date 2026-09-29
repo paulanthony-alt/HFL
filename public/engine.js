@@ -11,7 +11,7 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 // ---------------------------------------------------------------------------
 // Madden-style ratings
 //
-// Every player has nine ratings (20–99). Their overall (OVR) is a weighted mix of
+// Every player has eleven ratings (20–99). Their overall (OVR) is a weighted mix of
 // those ratings, and the mix depends on position, just like Madden: a QB's OVR is
 // mostly throwing, a WR's is catching, routes and speed, and so on.
 
@@ -19,8 +19,10 @@ export const ATTR_MIN = 20;
 export const ATTR_MAX = 99;
 export const ATTRS = [
   { key: 'spd', short: 'SPD', label: 'Speed' },
+  { key: 'acc', short: 'ACC', label: 'Acceleration' },
   { key: 'cth', short: 'CTH', label: 'Catching' },
   { key: 'rte', short: 'RTE', label: 'Route Running' },
+  { key: 'rls', short: 'RLS', label: 'Release' },
   { key: 'thp', short: 'THP', label: 'Throw Power' },
   { key: 'tha', short: 'THA', label: 'Throw Accuracy' },
   { key: 'str', short: 'STR', label: 'Strength' },
@@ -29,16 +31,17 @@ export const ATTRS = [
   { key: 'sta', short: 'STA', label: 'Stamina' },
 ];
 export const ATTR_KEYS = ATTRS.map((a) => a.key);
+const DERIVED_FROM = { acc: 'spd', rls: 'rte' };
 
 // How much each rating counts toward OVR at each position (each row adds up to 1).
 export const POSITION_WEIGHTS = {
-  QB:   { tha: 0.42, thp: 0.28, spd: 0.12, str: 0.08, sta: 0.10 },
-  WR:   { cth: 0.32, rte: 0.30, spd: 0.26, str: 0.04, sta: 0.08 },
-  RB:   { spd: 0.32, str: 0.26, cth: 0.18, rte: 0.10, sta: 0.14 },
-  DB:   { mcv: 0.40, spd: 0.28, tak: 0.14, cth: 0.10, sta: 0.08 },
-  LB:   { tak: 0.34, str: 0.22, spd: 0.18, mcv: 0.16, sta: 0.10 },
-  RUSH: { spd: 0.36, str: 0.28, tak: 0.26, sta: 0.10 },
-  ATH:  { spd: 0.20, cth: 0.14, mcv: 0.14, sta: 0.12, rte: 0.10, str: 0.10, tak: 0.10, tha: 0.06, thp: 0.04 },
+  QB:   { tha: 0.40, thp: 0.26, sta: 0.12, spd: 0.08, str: 0.08, acc: 0.06 },
+  WR:   { cth: 0.28, rte: 0.24, spd: 0.18, rls: 0.12, acc: 0.10, sta: 0.05, str: 0.03 },
+  RB:   { spd: 0.26, str: 0.22, acc: 0.18, cth: 0.14, sta: 0.12, rte: 0.08 },
+  DB:   { mcv: 0.36, spd: 0.22, acc: 0.14, tak: 0.12, cth: 0.08, sta: 0.08 },
+  LB:   { tak: 0.32, str: 0.20, spd: 0.14, mcv: 0.14, acc: 0.10, sta: 0.10 },
+  RUSH: { spd: 0.26, str: 0.24, tak: 0.22, acc: 0.20, sta: 0.08 },
+  ATH:  { spd: 0.16, cth: 0.12, mcv: 0.12, acc: 0.10, sta: 0.10, rte: 0.08, str: 0.08, tak: 0.08, rls: 0.06, tha: 0.06, thp: 0.04 },
 };
 
 // The ratings that matter most at a position, biggest first (shown on the card front).
@@ -196,6 +199,8 @@ export function progression(s, actual, expected, current = {}) {
     tha: clamp(s.comp * 0.2 - incompletions * 0.15 - s.intThrown * 1.0, -1.5, 1.5),
     thp: clamp(s.passTD * 0.4, 0, 1),
     spd: clamp(s.rushTD * 0.5 + s.defTD * 0.6 + s.sacks * 0.25, 0, 1),
+    acc: clamp(s.rushTD * 0.4 + s.defTD * 0.4 + s.sacks * 0.2, 0, 1),
+    rls: clamp(s.rec * 0.15 + s.recTD * 0.4, 0, 1),
     str: clamp(s.rushTD * 0.3 + s.sacks * 0.3, 0, 1),
     mcv: clamp(s.defInt * 0.8, 0, 1.5),
     tak: clamp(s.sacks * 0.5, 0, 1),
@@ -228,6 +233,7 @@ export function computeLeague(db) {
   const ensure = (id) => {
     if (attrs[id] === undefined) { attrs[id] = baseAttrs(null); history[id] = [{ gameId: null, date: '', elo: DEFAULT_ELO, delta: 0 }]; }
   };
+  const setOwn = {};
   const pending = (db.players || [])
     .flatMap((p) => (p.ratingEdits || []).map((e) => ({ ...e, id: p.id })))
     .sort((a, b) => (a.at < b.at ? -1 : 1));
@@ -236,7 +242,15 @@ export function computeLeague(db) {
       const e = pending.shift();
       ensure(e.id);
       const before = rating(e.id);
-      if (e.attrs) for (const [k, v] of Object.entries(e.attrs)) { if (ATTR_KEYS.includes(k)) attrs[e.id][k] = clampAttr(v); }
+      if (e.attrs) {
+        for (const [k, v] of Object.entries(e.attrs)) { if (ATTR_KEYS.includes(k)) attrs[e.id][k] = clampAttr(v); }
+        // Ratings added later (ACC, RLS) start from their closest original one for players
+        // who were rated before they existed, until they're set on their own.
+        for (const [newKey, from] of Object.entries(DERIVED_FROM)) {
+          if (e.attrs[newKey] !== undefined) (setOwn[e.id] ||= new Set()).add(newKey);
+          else if (e.attrs[from] !== undefined && !setOwn[e.id]?.has(newKey)) attrs[e.id][newKey] = clampAttr(e.attrs[from]);
+        }
+      }
       else if (e.ovr !== undefined) for (const k of ATTR_KEYS) attrs[e.id][k] = clampAttr(e.ovr);
       const after = rating(e.id);
       history[e.id].push({ gameId: null, date: e.at.slice(0, 10), elo: ovrToElo(after), delta: Math.round((after - before) * 100) / 10, edit: true });

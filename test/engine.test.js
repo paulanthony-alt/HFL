@@ -162,7 +162,8 @@ test('Madden OVR: weights per position, each adds up to 1', () => {
     assert.equal(Math.round(Object.values(w).reduce((a, b) => a + b, 0) * 1000), 1000, pos);
     for (const k of Object.keys(w)) assert.ok(E.ATTR_KEYS.includes(k), `${pos}.${k}`);
   }
-  assert.equal(E.ATTRS.length, 9);
+  assert.equal(E.ATTRS.length, 11);
+  assert.deepEqual(E.ATTR_KEYS, ['spd', 'acc', 'cth', 'rte', 'rls', 'thp', 'tha', 'str', 'mcv', 'tak', 'sta']);
 });
 
 test('Madden OVR: same player rates differently by position', () => {
@@ -171,7 +172,8 @@ test('Madden OVR: same player rates differently by position', () => {
   assert.ok(E.overall(gunslinger, 'WR') < 60, 'but not a receiver');
   const burner = { spd: 97, cth: 90, rte: 88, thp: 40, tha: 40, str: 55, mcv: 60, tak: 50, sta: 85 };
   assert.ok(E.overall(burner, 'WR') > E.overall(burner, 'QB') + 30);
-  assert.deepEqual(E.keyAttrs('DB'), ['mcv', 'spd', 'tak', 'cth']);
+  assert.deepEqual(E.keyAttrs('DB'), ['mcv', 'spd', 'acc', 'tak']);
+  assert.deepEqual(E.keyAttrs('WR'), ['cth', 'rte', 'spd', 'rls']);
   const pos = E.positionOveralls(burner);
   assert.equal(Object.keys(pos).length, E.POSITIONS.length);
 });
@@ -206,4 +208,28 @@ test('ratings: attribute edits, legacy OVR edits, and games replay in order', ()
 
 test('no centers: C is not a position', () => {
   assert.ok(!E.POSITIONS.includes('C'));
+});
+
+test('new ratings (ACC, RLS) follow SPD / RTE for players rated before they existed', () => {
+  const players = [
+    { id: 'old', position: 'WR', ratingEdits: [{ at: '2026-09-01T00:00:00.000Z', attrs: { spd: 94, rte: 88, cth: 90 } }] },
+    { id: 'own', position: 'WR', ratingEdits: [
+      { at: '2026-09-01T00:00:00.000Z', attrs: { acc: 75, rls: 60 } },
+      { at: '2026-09-02T00:00:00.000Z', attrs: { spd: 94, rte: 88 } },
+    ] },
+    { id: 'legacy', ratingEdits: [{ at: '2026-09-01T00:00:00.000Z', ovr: 83 }] },
+  ];
+  const L = E.computeLeague({ players, games: [] });
+  assert.equal(L.attrs.old.acc, 94, 'acceleration starts from speed');
+  assert.equal(L.attrs.old.rls, 88, 'release starts from route running');
+  assert.equal(L.attrs.own.acc, 75, 'once set on its own it stays put');
+  assert.equal(L.attrs.own.rls, 60);
+  assert.equal(L.attrs.legacy.acc, 83, 'old single-number ratings cover the new ones too');
+  assert.equal(L.ovr.old, E.overall({ ...L.attrs.old }, 'WR'));
+});
+
+test('progression: catches build release, rushing TDs build acceleration', () => {
+  const s = (o) => ({ ...E.blankStats(), ...o });
+  assert.ok(E.progression(s({ rec: 4, recTD: 1 }), 0.5, 0.5).rls > 0.5);
+  assert.ok(E.progression(s({ rushTD: 2 }), 0.5, 0.5).acc > 0.5);
 });

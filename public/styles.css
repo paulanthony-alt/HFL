@@ -788,7 +788,10 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
 .ab-d.down { color: var(--red); }
 .ab:not(:has(.ab-d)):has(.ab-l)::after { content: ''; }
 .attr-list { margin: 4px 0 6px; }
-.tc-attrs { display: grid; gap: 5px; margin: 8px 0 4px; }
+.tc-attrs { display: grid; gap: 3px; margin: 6px 0 4px; }
+.tc-back .tc-back-title { margin: 0 0 2px; }
+.tc-back .tc-season b { font-size: 17px; }
+.tc-back .tc-foot { margin-top: 5px; }
 .tc-attrs .ab { grid-template-columns: 30px 1fr 24px; }
 .tc-attrs .ab-v { font-size: 16px; }
 .tc-season { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: auto; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--edge) 30%, transparent); text-align: center; }
@@ -990,6 +993,7 @@ details.rate-row[open] > summary { margin-bottom: 10px; }
   .lb td.l a { gap: 8px; }
 }
 @media (max-width: 380px) {
+  .tc-back .tc-season { display: none; }
   :root { --gutter: 12px; }
   .card { padding: 14px; }
   .divider { margin-left: -14px; margin-right: -14px; }

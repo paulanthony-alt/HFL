@@ -54,7 +54,9 @@ const attrsOf = (id) => S.league.attrs[id] || E.baseAttrs(P(id));
 const grade = (v) => (v >= 90 ? 'elite' : v >= 80 ? 'great' : v >= 70 ? 'good' : v >= 60 ? 'meh' : 'rough');
 const attrMeta = Object.fromEntries(E.ATTRS.map((a) => [a.key, a]));
 const ATTR_INFO = {
-  spd: ['How fast he gets from A to B: running routes, chasing the ball, closing on a QB.', 'Up with rushing TDs, pick sixes and sacks.'],
+  spd: ['Top speed: how fast he is once he gets going, running routes, chasing the ball, closing on a QB.', 'Up with rushing TDs, pick sixes and sacks.'],
+  acc: ['How fast he gets up to top speed: the first step off the line and the burst out of a cut.', 'Up with rushing TDs, pick sixes and sacks.'],
+  rls: ["Getting off the line clean when someone's pressed up on him at the snap.", 'Up with catches and receiving TDs.'],
   cth: ['Hands. When the ball gets to him, does it stick?', 'Up with every catch, down with every drop.'],
   rte: ['Getting open: sharp cuts, timing, shaking the guy covering him.', 'Up with catches and receiving TDs.'],
   thp: ['Arm strength: how far and how hard he can throw it.', 'Up with TD passes.'],
@@ -748,7 +750,7 @@ function viewStats() {
       }],
       ...E.ATTRS.map((at) => [at.short, (s, id) => `<span class="g-${grade(attrsOf(id)[at.key])}">${attrsOf(id)[at.key]}</span>`]),
     ];
-    note = 'OVR comes from the nine ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
+    note = 'OVR comes from the eleven ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
   }
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
@@ -949,7 +951,7 @@ function viewEditPlayer(id) {
         ${p ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>`}
-        <p class="muted small">${p ? 'His nine Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all nine of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
+        <p class="muted small">${p ? 'His eleven Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
         <div class="photo-field">
           ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
           <label class="grow">Card photo <input type="file" name="photo" accept="image/*"></label>
@@ -1254,7 +1256,7 @@ function viewSettings() {
     </section>
     <section class="card">
       <div class="row-between"><h3>Rate players</h3><a class="btn sm hot" href="#/ratings">Open ›</a></div>
-      <p class="muted small">Madden style: set each guy's nine ratings (speed, catching, throw power…) and position. His OVR is worked out from them.</p>
+      <p class="muted small">Madden style: set each guy's eleven ratings (speed, acceleration, catching, throw power…) and position. His OVR is worked out from them.</p>
     </section>
     <section class="card">
       <h3>${S.auth?.managedBy === 'firebase' ? 'Crew password' : 'Crew passcode'}</h3>
@@ -1300,7 +1302,7 @@ function viewKey() {
     <a class="back" href="#/cards">‹ Cards</a>
     ${pageHead('Madden style', 'Ratings key')}
     <section class="card">
-      <h3>The nine ratings</h3>
+      <h3>The eleven ratings</h3>
       <p class="muted small">Every player is rated 20–99 in each one.</p>
       <div class="key-list">${E.ATTRS.map((a) => `
         <div class="key-row">
@@ -1323,7 +1325,7 @@ function viewKey() {
     </section>
     <section class="card">
       <h3>How OVR works</h3>
-      <p class="muted small">Like Madden, OVR is a mix of the nine ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
+      <p class="muted small">Like Madden, OVR is a mix of the eleven ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
       <div class="key-pos">${E.POSITIONS.map((pos) => `
         <div class="key-pos-row"><b>${pos}</b><span>${Object.entries(E.POSITION_WEIGHTS[pos]).sort((x, y) => y[1] - x[1])
           .map(([k, w]) => `<em title="${h(attrMeta[k].label)}">${attrMeta[k].short} ${pct(w)}</em>`).join('')}</span></div>`).join('')}
@@ -1337,7 +1339,7 @@ function viewRatings() {
     <a class="back" href="#/settings">‹ Settings</a>
     <section class="card">
       <h2>Rate players</h2>
-      <p class="muted">Madden style. Every guy has nine ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
+      <p class="muted">Madden style. Every guy has eleven ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
       <form data-f="ratings" class="form rate-list">
         ${list.map(rateRow).join('')}
         <button class="btn hot block">Save ratings</button>
@@ -1362,8 +1364,8 @@ function rateRow(p) {
           <label>Position
             <select data-ch="rate-pos">${E.POSITIONS.map((x) => `<option ${x === pos ? 'selected' : ''}>${x}</option>`).join('')}</select>
           </label>
-          <label>Set all nine
-            <input type="range" min="${E.ATTR_MIN}" max="${E.ATTR_MAX}" value="${Math.round(E.ATTR_KEYS.reduce((t, k) => t + a[k], 0) / 9)}" data-ch="rate-all">
+          <label>Set all
+            <input type="range" min="${E.ATTR_MIN}" max="${E.ATTR_MAX}" value="${Math.round(E.ATTR_KEYS.reduce((t, k) => t + a[k], 0) / E.ATTR_KEYS.length)}" data-ch="rate-all">
           </label>
         </div>
         ${E.ATTRS.map((at) => `
