@@ -1,6 +1,8 @@
 import * as E from './engine.js';
 import { ROSTER_VERSION } from './league.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
+import { computeAwards, DESIGNS, cardDesign } from './awards.js';
+import { buildRecap, recapToPngBlob } from './recap.js';
 
 // ---------------------------------------------------------------------------
 // State + helpers
@@ -154,6 +156,7 @@ function setDb(db, { remote = false } = {}) {
   if (S.db && db.version < S.db.version) return;
   S.db = db;
   S.league = E.computeLeague(db);
+  S.awards = computeAwards(db, S.league);
   if (!S.season) S.season = db.settings.season;
   remote ? requestRender() : render();
 }
@@ -218,6 +221,7 @@ const ROUTES = [
   [/^#\/nickname$/, viewNickname, ''],
   [/^#\/ratings$/, viewRatings, ''],
   [/^#\/key$/, viewKey, 'cards'],
+  [/^#\/awards$/, viewAwards, 'stats'],
   [/^#\/settings$/, viewSettings, ''],
 ];
 
@@ -276,12 +280,24 @@ function ensureRoster() {
     .finally(() => { ensureRoster.running = false; });
 }
 
+// Tell a player (once per phone) when he unlocks a new card design.
+function announceUnlocks(id) {
+  const k = `hfl.seenDesigns.${id}`;
+  const unlocked = S.awards.designs[id] || [''];
+  const raw = lsGet(k);
+  const seen = raw ? raw.split(',') : null;
+  lsSet(k, unlocked.join(','));
+  if (!seen) return; // first visit: nothing to announce yet
+  const fresh = DESIGNS.filter((d) => d.key && unlocked.includes(d.key) && !seen.includes(d.key));
+  if (fresh.length) setTimeout(() => toast(`🔓 New card design unlocked: ${fresh[0].emoji} ${fresh[0].name}. Tap your card to wear it.`), 400);
+}
+
 function renderChrome(tab) {
   $('#crew-name').textContent = S.db.settings.crewName === 'HFL' ? '' : S.db.settings.crewName;
   document.title = S.db.settings.crewName === 'HFL' ? 'HFL' : `HFL · ${S.db.settings.crewName}`;
   const m = me();
   $('#me-pill').innerHTML = m ? `${avatar(m, 'xs')} ${h(nick(m))}` : 'Who are you?';
-  if (m) hydrateImages();
+  if (m) { hydrateImages(); announceUnlocks(m); }
   document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
 }
 
@@ -410,7 +426,15 @@ function viewHome() {
     ${current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}`;
 
   const rest = finals.filter((g) => g !== current);
+  const potw = S.awards.potw.at(-1);
   const side = `
+    ${potw ? `
+      ${sec('Player of the Week', '<a class="sec-link" href="#/awards">Awards ›</a>')}
+      <a class="potw" href="#/p/${potw.id}">
+        ${avatar(potw.id, 'lg')}
+        <span class="grow"><b>${h(nick(potw.id))}</b><span class="muted small">Week of ${h(fmtDate(potw.week, { month: 'short', day: 'numeric' }))} · ${statLine(potw.stats)}</span></span>
+        <span class="potw-flame">🔥</span>
+      </a>` : ''}
     ${leaders.length ? `
       ${sec('MVP race', `<a class="sec-link" href="#/stats">Season ${h(S.db.settings.season)} ›</a>`)}
       <div class="podium">${leaders.map(([id, st], i) => `
@@ -620,6 +644,7 @@ function finalSection(g) {
   const info = gameInfo(g);
   return `
     ${scoreboard(g)}
+    ${recapCard(g)}
     ${mvpBlock(g)}
     ${sec('Box score')}
     ${boxScore(g, info)}
@@ -754,6 +779,7 @@ function viewStats() {
   }
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
+      <a class="btn sm ghost" href="#/awards">🏅 Awards</a>
       <select class="pill-select" data-ch="season" aria-label="Season">
         ${seasons().map((s) => `<option value="${h(s)}" ${S.season === s ? 'selected' : ''}>Season ${h(s)}</option>`).join('')}
         <option value="career" ${S.season === 'career' ? 'selected' : ''}>Career</option>
@@ -803,6 +829,16 @@ function badges(id) {
   if (E.totalTDs(c) >= 5) out.push('🏈 End Zone Regular');
   if (c.drops >= 3) out.push('🧈 Butter Hands');
   if (S.db.fame.some((f) => f.category !== 'best' && f.playerIds.includes(id))) out.push('🤡 Hall of Shame');
+  const a = S.awards.byPlayer[id];
+  if (a) {
+    const aw = { mvp: '👑 {s} MVP', improved: '📈 {s} Most Improved', butter: '🧈 {s} Butterfingers' };
+    for (const x of a.awards) out.unshift(aw[x.key].replace('{s}', x.season));
+    if (a.potw.length) out.unshift(`🔥 ${a.potw.length > 1 ? `${a.potw.length}× ` : ''}Player of the Week`);
+    // the biggest milestone reached in each category
+    const top = {};
+    for (const m of a.milestones) if (!top[m.key] || m.n > top[m.key].n) top[m.key] = m;
+    for (const m of Object.values(top)) if (m.n >= 10) out.push(`${m.emoji} ${m.label}`);
+  }
   return out;
 }
 
@@ -831,7 +867,9 @@ function tradingCard(id, { mini = false } = {}) {
       </div>
       <div class="tc-foot">HFL · ${h(S.db.settings.season)}</div>
     </div>`;
-  if (mini) return `<a href="#/p/${id}" class="tcard mini tier-${tier(o)}">${front}</a>`;
+  const design = cardDesign(S.awards, p);
+  const cls = `tier-${tier(o)}${design ? ` design-${design}` : ''}`;
+  if (mini) return `<a href="#/p/${id}" class="tcard mini ${cls}">${front}</a>`;
   const back = `
     <div class="tc-face tc-back">
       <div class="tc-back-title">${h(p.nickname || p.name)} · Ratings</div>
@@ -844,7 +882,7 @@ function tradingCard(id, { mini = false } = {}) {
       </div>
       <div class="tc-foot">tap to flip</div>
     </div>`;
-  return `<div class="tcard big tier-${tier(o)}" data-a="flip"><div class="tc-inner">${front}${back}</div></div>`;
+  return `<div class="tcard big ${cls}" data-a="flip"><div class="tc-inner">${front}${back}</div></div>`;
 }
 
 function viewCards() {
@@ -893,6 +931,154 @@ function careerSection(id) {
     </section>`;
 }
 
+function progressionSection(id) {
+  const season = S.db.settings.season;
+  const games = gamesSorted().filter((g) => g.status === 'final' && g.season === season && S.league.games[g.id]?.attrChanges?.[id]);
+  if (!games.length) return '';
+  const sum = Object.fromEntries(E.ATTR_KEYS.map((k) => [k, 0]));
+  for (const g of games) for (const k of E.ATTR_KEYS) sum[k] += S.league.games[g.id].attrChanges[id][k] || 0;
+  const ovrGain = games.reduce((t, g) => t + (S.league.games[g.id].ratingChanges?.[id] || 0) / 10, 0);
+  const moves = E.ATTR_KEYS.map((k) => [k, sum[k]]).filter(([, v]) => Math.abs(v) >= 0.05).sort((a, b) => b[1] - a[1]);
+  const up = moves.filter(([, v]) => v > 0).slice(0, 3);
+  const down = moves.filter(([, v]) => v < 0).slice(-2).reverse();
+  const chip = ([k, v]) => `<span class="prog-chip ${v > 0 ? 'up' : 'down'}"><b>${attrMeta[k].short}</b> ${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}</span>`;
+  return `
+    <section class="card">
+      <div class="row-between"><h3>Progression</h3><span class="muted small">Season ${h(season)} · ${games.length} game${games.length > 1 ? 's' : ''}</span></div>
+      <div class="prog-ovr">${deltaTag(ovrGain * 10)} <span class="muted">OVR from games this season</span></div>
+      ${up.length ? `<div class="chips-label">Biggest gains</div><div class="chips">${up.map(chip).join('')}</div>` : ''}
+      ${down.length ? `<div class="chips-label">Slipping</div><div class="chips">${down.map(chip).join('')}</div>` : ''}
+    </section>`;
+}
+
+function awardsSection(id) {
+  const a = S.awards.byPlayer[id];
+  if (!a || (!a.potw.length && !a.awards.length && !a.milestones.length)) return '';
+  const aw = { mvp: ['👑', 'Season MVP'], improved: ['📈', 'Most Improved'], butter: ['🧈', 'Butterfingers'] };
+  const rows = [
+    ...a.awards.map((x) => ({ icon: aw[x.key][0], title: `${x.season} ${aw[x.key][1]}`, sub: x.note, date: `${x.season}-12-31` })),
+    ...a.potw.map((x) => ({ icon: '🔥', title: 'Player of the Week', sub: `Week of ${fmtDate(x.week, { month: 'short', day: 'numeric' })} · ${statLine(x.stats)}`, date: x.week })),
+    ...a.milestones.map((m) => ({ icon: m.emoji, title: m.label, sub: fmtDate(m.date, { month: 'short', day: 'numeric', year: 'numeric' }), date: m.date, href: `#/g/${m.gameId}` })),
+  ].sort((x, y) => (y.date > x.date ? 1 : -1));
+  return `
+    <section class="card">
+      <div class="row-between"><h3>Awards & milestones</h3><a class="sec-link" href="#/awards">All awards ›</a></div>
+      <div class="trophy-list">${rows.slice(0, 12).map((x) => `
+        <${x.href ? `a href="${x.href}"` : 'div'} class="trophy"><span class="trophy-ic">${x.icon}</span><span class="grow"><b>${h(x.title)}</b><span class="muted small">${h(x.sub)}</span></span></${x.href ? 'a' : 'div'}>`).join('')}
+      </div>
+    </section>`;
+}
+
+function designSection(id) {
+  const p = P(id);
+  const unlocked = S.awards.designs[id] || [''];
+  const cur = cardDesign(S.awards, p);
+  return `
+    <section class="card">
+      <div class="row-between"><h3>Card designs</h3><span class="muted small">${unlocked.length} of ${DESIGNS.length} unlocked</span></div>
+      <div class="design-grid">${DESIGNS.map((d) => {
+        const open = unlocked.includes(d.key);
+        return `<button class="design-opt design-${d.key || 'classic'} ${open ? '' : 'locked'} ${cur === d.key ? 'on' : ''}" ${open ? `data-a="set-design" data-p="${id}" data-d="${d.key}"` : 'disabled'} title="${h(d.how)}">
+          <span class="design-swatch tcard ${open ? `tier-${tier(ovr(id))} ${d.key ? `design-${d.key}` : ''}` : ''}"><i></i></span>
+          <b>${open ? '' : '🔒 '}${d.emoji} ${h(d.name)}</b><small>${open ? (cur === d.key ? 'Wearing it' : 'Tap to wear') : h(d.how)}</small>
+        </button>`;
+      }).join('')}</div>
+    </section>`;
+}
+
+function recapFor(g) {
+  const info = gameInfo(g);
+  return buildRecap(g, info, { name: nick, statLine, milestones: S.awards.milestones });
+}
+
+function recapCard(g, { compact = false } = {}) {
+  const r = recapFor(g);
+  const w = r.winner;
+  return `
+    <article class="recap">
+      <div class="recap-top"><span class="recap-brand">HFL CENTER</span><span class="muted small">${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</span></div>
+      ${compact ? `<a class="recap-score" href="#/g/${g.id}"><span class="${w === 'A' ? 'win' : ''}">${h(r.teams.A)} <b>${r.score.A}</b></span><span class="${w === 'B' ? 'win' : ''}"><b>${r.score.B}</b> ${h(r.teams.B)}</span></a>` : ''}
+      <h3 class="recap-head">${h(r.headline)}</h3>
+      ${r.goat ? `<div class="recap-goat">${avatar(r.goat.id, 'lg')}<div><div class="kicker gold">Goat of the day</div><b>${h(nick(r.goat.id))}</b><span class="muted small">${h(r.goat.line)}</span></div></div>` : ''}
+      ${r.topPlays.length ? `<div class="chips-label">Top plays</div><ol class="recap-plays">${r.topPlays.map((p) => `<li><span>${p.emoji}</span>${h(p.text)}</li>`).join('')}</ol>` : ''}
+      ${r.worstDrop ? `<div class="chips-label">Worst drop 🧈</div><p class="recap-line">${h(r.worstDrop.text)}</p>` : ''}
+      ${r.milestones.length ? `<div class="chips-label">Milestones${r.milestones.length > 4 ? ` <span class="muted">(+${r.milestones.length - 4} more)</span>` : ''}</div><div class="chips">${[...r.milestones].sort((a, b) => b.n - a.n).slice(0, 4).map((m) => `<span class="pchip">${avatar(m.id, 'xs')} ${m.emoji} ${h(nick(m.id))}: ${h(m.label)}</span>`).join('')}</div>` : ''}
+      ${r.roast ? `<blockquote class="recap-roast">“${h(r.roast.text)}”</blockquote>` : ''}
+      <button class="btn hot block" data-a="share-recap" data-g="${g.id}">📤 Share recap</button>
+    </article>`;
+}
+
+async function shareRecap(g) {
+  const r = recapFor(g);
+  try {
+    let goatPhoto = r.goat ? photoOf(P(r.goat.id)) : null;
+    if (goatPhoto?.startsWith('fsimg:')) goatPhoto = await S.backend?.getImage(goatPhoto.slice(6));
+    const gp = r.goat ? P(r.goat.id) : null;
+    const blob = await recapToPngBlob(r, { name: nick, goatPhoto, goatColor: gp?.color, goatInitial: gp ? initials(gp.name) : '', crew: S.db.settings.crewName, dateLabel: fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }) });
+    const file = new File([blob], `hfl-recap-${g.date}.png`, { type: 'image/png' });
+    const text = `${r.headline} (${r.teams.A} ${r.score.A}–${r.score.B} ${r.teams.B})`;
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: 'HFL Center', text }); return; }
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: file.name });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('Recap image downloaded. Drop it in the group chat');
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('Could not share: ' + e.message, true);
+  }
+}
+
+function viewAwards() {
+  const season = S.season === 'career' ? S.db.settings.season : S.season;
+  const s = S.awards.seasons[season];
+  const potw = [...S.awards.potw].reverse();
+  const recent = [...S.awards.milestones].reverse().filter((m) => m.n > 1).slice(0, 12);
+  const firsts = [...S.awards.milestones].reverse().filter((m) => m.n === 1).slice(0, 16);
+  const award = (x, icon, title, blurb) => `
+    <div class="award ${x ? '' : 'empty-award'}">
+      <div class="award-ic">${icon}</div>
+      <div class="grow"><div class="kicker ${x ? 'gold' : ''}">${title}${x ? (s.done ? ' · Winner' : ' · Leader so far') : ''}</div>
+        ${x ? `<a href="#/p/${x.id}" class="award-who">${avatar(x.id, 'xs')} <b>${h(nick(x.id))}</b></a><span class="muted small">${h(x.note)}</span>` : `<span class="muted small">${blurb}</span>`}
+      </div>
+    </div>`;
+  return `
+    ${pageHead(`Season ${h(season)}`, 'Awards', `
+      <select class="pill-select" data-ch="season" aria-label="Season">
+        ${seasons().map((x) => `<option value="${h(x)}" ${season === x ? 'selected' : ''}>Season ${h(x)}</option>`).join('')}
+      </select>`)}
+    <section class="card">
+      <h3>Season awards</h3>
+      <p class="muted small">${s?.done ? 'Final. These are locked in.' : 'Handed out when the season ends (change the season name in Settings to start a new one). Here\'s who\'s leading.'}</p>
+      ${award(s?.mvp, '👑', 'MVP', 'Most MVP points: stats, crowd MVPs and wins.')}
+      ${award(s?.improved, '📈', 'Most Improved', 'Biggest OVR gain from games this season (2+ games).')}
+      ${award(s?.butter, '🧈', 'Butterfingers', 'Most drops. Nobody wants this one.')}
+    </section>
+    <section class="card">
+      <h3>Player of the Week</h3>
+      <p class="muted small">Biggest stat impact across each week's games (weeks start Monday).</p>
+      ${potw.length ? potw.slice(0, 10).map((x, i) => `
+        <a class="potw ${i === 0 ? 'latest' : ''}" href="#/p/${x.id}">
+          ${avatar(x.id, i === 0 ? 'lg' : '')}
+          <span class="grow"><b>${h(nick(x.id))}</b><span class="muted small">Week of ${h(fmtDate(x.week, { month: 'short', day: 'numeric' }))} · ${statLine(x.stats)}</span></span>
+          ${i === 0 ? '<span class="potw-flame">🔥</span>' : ''}
+        </a>`).join('') : `<div class="empty-inline">${ART.trophy}<span>Finish a game and the first Player of the Week gets crowned.</span></div>`}
+    </section>
+    <section class="card">
+      <h3>Milestone tracker</h3>
+      ${recent.length ? `<div class="trophy-list">${recent.map((m) => `
+        <a class="trophy" href="#/g/${m.gameId}"><span class="trophy-ic">${m.emoji}</span><span class="grow"><b>${h(nick(m.id))}: ${h(m.label)}</b><span class="muted small">${h(fmtDate(m.date, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></span></a>`).join('')}</div>`
+        : `<p class="muted small">10th catch, 25th TD, 100th TD… the big ones show up here.</p>`}
+      ${firsts.length ? `<div class="chips-label">Recent firsts</div><div class="chips">${firsts.map((m) => `<a class="pchip" href="#/g/${m.gameId}">${avatar(m.id, 'xs')} ${m.emoji} ${h(nick(m.id))}: ${h(m.label.replace('First ', 'first '))}</a>`).join('')}</div>` : ''}
+    </section>
+    <section class="card">
+      <h3>Card designs</h3>
+      <p class="muted small">Unlock these with awards and milestones, then wear them from your player page.</p>
+      <div class="trophy-list">${DESIGNS.filter((d) => d.key).map((d) => {
+        const who = Object.entries(S.awards.designs).filter(([, list]) => list.includes(d.key)).map(([id]) => id).filter((id) => S.db.players.some((p) => p.id === id));
+        return `<div class="trophy"><span class="design-swatch tcard tier-gold design-${d.key}"><i></i></span><span class="grow"><b>${d.emoji} ${h(d.name)}</b><span class="muted small">${h(d.how)}</span>${who.length ? `<span class="chips">${who.map((id) => `<a class="pchip" href="#/p/${id}">${avatar(id, 'xs')} ${h(nick(id))}</a>`).join('')}</span>` : ''}</span></div>`;
+      }).join('')}</div>
+    </section>`;
+}
+
 function viewCard(id) {
   const p = S.db.players.find((x) => x.id === id);
   if (!p) return `<p class="muted">Player not found. <a href="#/cards">Back</a></p>`;
@@ -907,6 +1093,9 @@ function viewCard(id) {
     <div class="badges">${badges(id).map((b) => `<span class="badge">${h(b)}</span>`).join('')}</div>
 
     ${ratingsSection(id, log)}
+    ${progressionSection(id)}
+    ${awardsSection(id)}
+    ${designSection(id)}
     <section class="card">
       <div class="row-between"><h3>OVR over time</h3><span class="muted small">started at ${first} → now <b>${ovr(id)}</b></span></div>
       ${sparkline(hist, { w: 600, hgt: 90, cls: 'wide' })}
@@ -1114,7 +1303,13 @@ function viewWall() {
           </div>
         </form>` : `<a class="btn ghost block" href="#/me">Pick who you are to post</a>`}
     </section>
-    ${posts.map((post) => `
+    ${[...posts.map((post) => ({ t: post.createdAt, post })), ...finals.slice(0, 10).map((g) => ({ t: g.endedAt || `${g.date}T23:00:00.000Z`, g }))]
+      .sort((a, b) => (b.t > a.t ? 1 : -1))
+      .map((x) => (x.g ? recapCard(x.g, { compact: true }) : postCard(x.post, m))).join('') || `<section class="card">${empty({ art: 'mic', title: 'Quiet in here. Too quiet.', text: 'Somebody has to start it. Hit Roast if you need help.' })}</section>`}`;
+}
+
+function postCard(post, m) {
+  return `
       <article class="post">
         <div class="post-head">${avatar(post.authorId)}<div><b>${h(nick(post.authorId))}</b><div class="muted small">${h(ago(post.createdAt))}${post.gameId ? ` · re: ${h(fmtDate(S.db.games.find((g) => g.id === post.gameId)?.date, { month: 'short', day: 'numeric' }))}` : ''}</div></div>
           ${post.authorId === m ? `<button class="icon-btn sm" data-a="del-post" data-id="${post.id}" aria-label="Delete post">🗑</button>` : ''}</div>
@@ -1123,7 +1318,7 @@ function viewWall() {
           const who = post.reactions?.[e] || [];
           return `<button class="react ${m && who.includes(m) ? 'on' : ''}" data-a="react" data-id="${post.id}" data-e="${e}">${e}${who.length ? ` ${who.length}` : ''}</button>`;
         }).join('')}</div>
-      </article>`).join('') || `<section class="card">${empty({ art: 'mic', title: 'Quiet in here. Too quiet.', text: 'Somebody has to start it. Hit Roast if you need help.' })}</section>`}`;
+      </article>`;
 }
 
 function roast() {
@@ -1502,6 +1697,8 @@ const A = {
     if (!confirm('Remove this card photo?')) return;
     run(() => api('POST', `/api/players/${p}/photo`, { image: null }), 'Photo removed');
   },
+  'share-recap': ({ g }) => { const game = S.db.games.find((x) => x.id === g); if (game) shareRecap(game); },
+  'set-design': ({ p, d }) => run(() => api('PATCH', `/api/players/${p}`, { cardStyle: d }), d ? `${DESIGNS.find((x) => x.key === d).emoji} Card design on` : 'Back to Classic'),
   'forget-pass': () => { S.pass = ''; lsSet('hfl.pass', ''); toast('Passcode forgotten on this phone'); render(); },
 };
 

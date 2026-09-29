@@ -2,6 +2,7 @@
 // server (server.js) and the Firebase backend that runs in the browser.
 import { EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
 import { buildDemo } from './demo.js';
+import { DESIGN_KEYS } from './awards.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
@@ -73,6 +74,7 @@ function cleanPlayer(body, existing = {}) {
   if ('emoji' in body) p.emoji = str(body.emoji, 16, { name: 'emoji' });
   if ('color' in body) p.color = color(body.color, existing.color || '#ff6b1a');
   if ('active' in body) p.active = !!body.active;
+  if ('cardStyle' in body) p.cardStyle = oneOf(body.cardStyle || '', DESIGN_KEYS, 'card design');
   return p;
 }
 
