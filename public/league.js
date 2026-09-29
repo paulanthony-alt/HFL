@@ -1,6 +1,6 @@
 // League rules: validation and every change the app can make, shared by the Node
 // server (server.js) and the Firebase backend that runs in the browser.
-import { EVENT_TYPES, POSITIONS, computeLeague, balanceTeams, teamOf } from './engine.js';
+import { EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
 import { buildDemo } from './demo.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
@@ -69,7 +69,7 @@ function cleanPlayer(body, existing = {}) {
   if ('nickname' in body) p.nickname = str(body.nickname, 40, { name: 'nickname' });
   if ('number' in body) p.number = body.number === '' || body.number === null ? '' : num(body.number, 0, 99, { name: 'jersey number', int: true });
   if ('position' in body) p.position = oneOf(body.position, POSITIONS, 'position');
-  if ('startOvr' in body) p.startOvr = num(body.startOvr, 40, 99, { name: 'starting rating', int: true });
+  if ('startOvr' in body) p.startOvr = num(body.startOvr, ATTR_MIN, ATTR_MAX, { name: 'starting level', int: true });
   if ('emoji' in body) p.emoji = str(body.emoji, 16, { name: 'emoji' });
   if ('color' in body) p.color = color(body.color, existing.color || '#ff6b1a');
   if ('active' in body) p.active = !!body.active;
@@ -211,16 +211,30 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     return db.players[i];
   });
 
-  // Manual ratings: { ratings: { playerId: ovr } }. Stored as dated edits so games
-  // played afterwards keep moving the rating from the new number.
+  // Manual ratings, Madden style: { ratings: { playerId: { attrs: { spd: 88, ... }, position } } }.
+  // (A plain number still works and sets all nine ratings to it.) Stored as dated edits so
+  // games played afterwards keep moving the ratings from the new numbers.
   on('POST', '/api/ratings', (db, b) => {
     const entries = Object.entries(b.ratings || {});
     if (!entries.length) throw bad('no ratings to save');
     const at = now();
     for (const [id, value] of entries) {
       const p = player(db, id);
-      const ovr = num(value, 40, 99, { name: `${p.name}'s rating`, int: true });
-      p.ratingEdits = [...(p.ratingEdits || []), { at, ovr }].slice(-50);
+      const edit = { at };
+      if (typeof value === 'number' || typeof value === 'string') {
+        edit.ovr = num(value, ATTR_MIN, ATTR_MAX, { name: `${p.name}'s rating`, int: true });
+      } else {
+        if (value?.position !== undefined) p.position = oneOf(value.position, POSITIONS, 'position');
+        const attrs = value?.attrs || {};
+        if (Object.keys(attrs).length) {
+          edit.attrs = {};
+          for (const [k, v] of Object.entries(attrs)) {
+            if (!ATTR_KEYS.includes(k)) throw bad(`unknown rating "${k}"`);
+            edit.attrs[k] = num(v, ATTR_MIN, ATTR_MAX, { name: `${p.name}'s ${k.toUpperCase()}`, int: true });
+          }
+        }
+      }
+      if (edit.ovr !== undefined || edit.attrs) p.ratingEdits = [...(p.ratingEdits || []), edit].slice(-50);
     }
     return entries.length;
   });

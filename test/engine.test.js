@@ -13,7 +13,7 @@ test('ovr <-> elo round-trips and clamps', () => {
   assert.equal(E.eloToOvr(E.ovrToElo(70)), 70);
   assert.equal(E.eloToOvr(E.ovrToElo(99)), 99);
   assert.equal(E.eloToOvr(5000), 99);
-  assert.equal(E.eloToOvr(0), 40);
+  assert.equal(E.eloToOvr(0), 1);
 });
 
 test('qbRating: perfect game is 158.3, null with no attempts', () => {
@@ -156,18 +156,52 @@ test('manual rating edits set the rating, and later games move it from there', (
   assert.equal(E.computeLeague({ players, games: [g] }).ovr.qa, 55);
 });
 
-test('statRatings: producers and winners rate higher, needs 2+ games', () => {
+test('Madden OVR: weights per position, each adds up to 1', () => {
+  for (const [pos, w] of Object.entries(E.POSITION_WEIGHTS)) {
+    assert.ok(E.POSITIONS.includes(pos), pos);
+    assert.equal(Math.round(Object.values(w).reduce((a, b) => a + b, 0) * 1000), 1000, pos);
+    for (const k of Object.keys(w)) assert.ok(E.ATTR_KEYS.includes(k), `${pos}.${k}`);
+  }
+  assert.equal(E.ATTRS.length, 9);
+});
+
+test('Madden OVR: same player rates differently by position', () => {
+  const gunslinger = { spd: 60, cth: 50, rte: 45, thp: 95, tha: 92, str: 70, mcv: 40, tak: 45, sta: 80 };
+  assert.ok(E.overall(gunslinger, 'QB') >= 85, 'elite arm → elite QB');
+  assert.ok(E.overall(gunslinger, 'WR') < 60, 'but not a receiver');
+  const burner = { spd: 97, cth: 90, rte: 88, thp: 40, tha: 40, str: 55, mcv: 60, tak: 50, sta: 85 };
+  assert.ok(E.overall(burner, 'WR') > E.overall(burner, 'QB') + 30);
+  assert.deepEqual(E.keyAttrs('DB'), ['mcv', 'spd', 'tak', 'cth']);
+  const pos = E.positionOveralls(burner);
+  assert.equal(Object.keys(pos).length, E.POSITIONS.length);
+});
+
+test('progression: catches build CTH, drops cost it, picks build coverage, gains slow near 99', () => {
   const s = (o) => ({ ...E.blankStats(), ...o });
-  const t = {
-    star: s({ gp: 4, w: 4, recTD: 6, rec: 12, mvps: 2 }),
-    avg: s({ gp: 4, w: 2, l: 2, rec: 5, recTD: 1 }),
-    butter: s({ gp: 4, l: 4, drops: 6, rec: 1 }),
-    rookie: s({ gp: 1, w: 1, recTD: 3 }),
-  };
-  const r = E.statRatings(t);
-  assert.ok(r.star.ovr > r.avg.ovr && r.avg.ovr > r.butter.ovr);
-  assert.equal(r.rookie, undefined);
-  for (const x of Object.values(r)) assert.ok(x.ovr >= 40 && x.ovr <= 99);
+  const even = [0.5, 0.5];
+  assert.ok(E.progression(s({ rec: 5, targets: 5 }), ...even).cth > 1);
+  assert.ok(E.progression(s({ drops: 3, targets: 3 }), ...even).cth < -1);
+  assert.ok(E.progression(s({ defInt: 2 }), ...even).mcv > 1);
+  const qb = E.progression(s({ att: 10, comp: 3, intThrown: 3 }), ...even);
+  assert.ok(qb.tha < 0, 'picks and misses hurt accuracy');
+  const dropsNotOnQb = E.progression(s({ att: 5, comp: 2, dropped: 3 }), ...even);
+  assert.ok(dropsNotOnQb.tha > 0, "receivers' drops don't count against the QB");
+  const rookie = E.progression(s({ rec: 5 }), ...even, { cth: 60 }).cth;
+  const vet = E.progression(s({ rec: 5 }), ...even, { cth: 97 }).cth;
+  assert.ok(vet < rookie / 3, 'harder to improve at the top');
+  assert.ok(E.progression(s({}), 1, 0.2).spd > E.progression(s({}), 1, 0.8).spd, 'upsets pay more');
+});
+
+test('ratings: attribute edits, legacy OVR edits, and games replay in order', () => {
+  const players = ['qa', 'wa', 'xa', 'qb', 'wb', 'xb'].map((id) => ({ id, startOvr: 70, position: 'WR' }));
+  players[1].ratingEdits = [{ at: '2026-08-01T00:00:00.000Z', attrs: { cth: 90, rte: 88, spd: 92 } }];
+  const g = game({ endedAt: '2026-09-10T00:00:00.000Z', events: [ev('pass_td', 'qa', 'wa', 'A'), ev('catch', 'qa', 'wa', 'A'), ev('drop', 'wb', 'qb', 'B')] });
+  const L = E.computeLeague({ players, games: [g] });
+  assert.ok(L.attrs.wa.cth >= 90 && L.attrs.wa.spd >= 92, 'kept the edit and progressed from it');
+  assert.ok(Math.abs(L.attrs.wa.thp - 70) <= 1, 'ratings he didn\'t use only move a little with the result');
+  assert.ok(L.attrs.wb.cth < 70, 'the drop cost wb catching');
+  assert.ok(L.games.g1.attrChanges.wb.cth < 0);
+  assert.ok(L.ovr.wa > L.ovr.xa);
 });
 
 test('no centers: C is not a position', () => {

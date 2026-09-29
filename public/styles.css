@@ -769,6 +769,64 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
 .rate-ctl input { flex: 1; }
 .rate-val { width: 50px; text-align: right; font: 900 34px/1 var(--display); color: var(--edge); }
 
+/* ---------- Madden-style ratings ---------- */
+.g-elite { --g: #ffd84d; color: var(--g); }
+.g-great { --g: #3ee07f; color: var(--g); }
+.g-good  { --g: #b6e35a; color: var(--g); }
+.g-meh   { --g: #ffa23d; color: var(--g); }
+.g-rough { --g: #ff5a6e; color: var(--g); }
+.ab { display: grid; grid-template-columns: 34px 1fr 26px; align-items: center; gap: 8px; min-height: 20px; }
+.ab:has(.ab-l) { grid-template-columns: 38px minmax(92px, 130px) 1fr 30px 44px; min-height: 34px; border-bottom: 1px solid var(--line); }
+.ab:has(.ab-l):last-child { border-bottom: 0; }
+.ab-k { font: 800 12.5px/1 var(--label); letter-spacing: 0.1em; color: var(--text-2); }
+.ab-l { font-size: 14px; font-weight: 600; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ab-bar { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.ab-bar i { display: block; height: 100%; border-radius: 4px; background: var(--g); box-shadow: 0 0 10px -2px var(--g); transition: width 0.5s var(--ease); }
+.ab-v { font: 900 19px/1 var(--display); text-align: right; }
+.ab-d { font: 800 12.5px/1 var(--label); letter-spacing: 0.02em; text-align: right; }
+.ab-d.up { color: var(--turf); }
+.ab-d.down { color: var(--red); }
+.ab:not(:has(.ab-d)):has(.ab-l)::after { content: ''; }
+.attr-list { margin: 4px 0 6px; }
+.tc-attrs { display: grid; gap: 5px; margin: 8px 0 4px; }
+.tc-attrs .ab { grid-template-columns: 30px 1fr 24px; }
+.tc-attrs .ab-v { font-size: 16px; }
+.tc-season { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: auto; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--edge) 30%, transparent); text-align: center; }
+.tc-season b { display: block; font: 800 19px/1 var(--display); }
+.tc-season small { font: 700 9.5px/1 var(--label); letter-spacing: 0.16em; color: var(--muted); }
+.tc-stats b.g-elite, .tc-stats b.g-great, .tc-stats b.g-good, .tc-stats b.g-meh, .tc-stats b.g-rough { text-shadow: 0 0 12px color-mix(in srgb, var(--g) 45%, transparent); }
+.pos-ovrs { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.pos-ovr { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px; border-radius: 10px; background: var(--bg-1); border: 1px solid var(--line); }
+.pos-ovr small { font: 700 10.5px/1 var(--label); letter-spacing: 0.12em; color: var(--muted); }
+.pos-ovr b { font: 900 20px/1 var(--display); }
+.pos-ovr.cur { border-color: var(--line-2); background: var(--surface-3); }
+.pos-ovr.best { box-shadow: inset 0 0 0 1.5px var(--gold); }
+.career td { padding: 7px 4px; }
+
+/* rate players editor */
+details.rate-row > summary { list-style: none; cursor: pointer; }
+details.rate-row > summary::-webkit-details-marker { display: none; }
+.rate-head { gap: 10px; }
+.rate-pos { font: 700 12px/1 var(--label); letter-spacing: 0.12em; color: var(--muted); padding: 4px 7px; border-radius: 6px; background: var(--bg-1); border: 1px solid var(--line); }
+.rate-head .rate-val { width: 44px; }
+details.rate-row[open] > summary { margin-bottom: 10px; }
+.rate-body { display: grid; gap: 4px; padding: 4px 0 6px; animation: rise 0.25s var(--ease) both; }
+.rate-top { display: grid; grid-template-columns: 110px 1fr; gap: 14px; align-items: end; margin-bottom: 6px; }
+.rate-top label { display: flex; flex-direction: column; gap: 6px; font: 700 11.5px/1 var(--label); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.rate-top select { min-height: 40px; padding: 8px 32px 8px 12px; }
+.form label.rate-attr { display: grid; grid-template-columns: 38px minmax(0, 110px) 1fr 34px; align-items: center; gap: 10px; min-height: 40px; text-transform: none; letter-spacing: 0; }
+.rate-attr .ra-k { font: 800 13px/1 var(--label); letter-spacing: 0.1em; color: var(--text-2); }
+.rate-attr .ra-l { font-size: 13.5px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rate-attr .ra-v { font: 900 22px/1 var(--display); text-align: right; }
+.rate-note { margin-top: 4px; }
+.rate-note b { color: var(--text); }
+@media (max-width: 420px) {
+  .form label.rate-attr { grid-template-columns: 38px 1fr 32px; }
+  .rate-attr .ra-l { display: none; }
+  .ab:has(.ab-l) { grid-template-columns: 36px minmax(0, 1fr) 70px 28px 40px; }
+  .pos-ovrs { grid-template-columns: repeat(4, 1fr); }
+}
+
 /* ---------- playbook ---------- */
 .play-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
 .play-tile {

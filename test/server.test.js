@@ -168,6 +168,15 @@ test('rate players endpoint stores dated edits and moves the rating', async () =
   assert.equal(r.status, 200);
   assert.equal(r.db.players[0].ratingEdits.at(-1).ovr, 93);
   assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: 150 } })).status, 400);
+
+  // Madden-style: individual ratings + position
+  const m = await call('POST', '/api/ratings', { ratings: { [p.id]: { attrs: { spd: 95, cth: 91 }, position: 'WR' } } });
+  assert.equal(m.status, 200);
+  const edited = m.db.players.find((x) => x.id === p.id);
+  assert.deepEqual(edited.ratingEdits.at(-1).attrs, { spd: 95, cth: 91 });
+  assert.equal(edited.position, 'WR');
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: { attrs: { swag: 99 } } } })).status, 400, 'unknown rating');
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: { attrs: { spd: 5 } } } })).status, 400, 'below 20');
 });
 
 test('passcode set in the app locks everything, survives restart, and can be removed', async () => {

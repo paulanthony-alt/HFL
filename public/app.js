@@ -34,6 +34,17 @@ const me = () => (S.me && S.db.players.some((p) => p.id === S.me) ? S.me : null)
 const initials = (name) => name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const avatar = (id, cls = '') => { const p = P(id); return `<span class="av ${cls}" style="--c:${h(p.color || '#ff6b1a')}">${h(p.emoji || initials(p.name))}</span>`; };
 const tier = (o) => (o >= 90 ? 'legend' : o >= 80 ? 'gold' : o >= 70 ? 'silver' : 'bronze');
+const attrsOf = (id) => S.league.attrs[id] || E.baseAttrs(P(id));
+// Madden-style rating colors: 90+ elite, 80s great, 70s good, 60s meh, below that rough.
+const grade = (v) => (v >= 90 ? 'elite' : v >= 80 ? 'great' : v >= 70 ? 'good' : v >= 60 ? 'meh' : 'rough');
+const attrMeta = Object.fromEntries(E.ATTRS.map((a) => [a.key, a]));
+function attrBar(key, value, delta = null, { label = false } = {}) {
+  const d = delta === null || Math.abs(delta) < 0.05 ? '' : `<span class="ab-d ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '+' : '−'}${Math.abs(delta).toFixed(1)}</span>`;
+  return `<div class="ab" title="${h(attrMeta[key].label)}">
+    <span class="ab-k">${attrMeta[key].short}</span>${label ? `<span class="ab-l">${h(attrMeta[key].label)}</span>` : ''}
+    <span class="ab-bar"><i class="g-${grade(value)}" style="width:${value}%"></i></span>
+    <b class="ab-v g-${grade(value)}">${value}</b>${d}</div>`;
+}
 const todayISO = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 const fmtDate = (iso, opts = { weekday: 'short', month: 'short', day: 'numeric' }) => {
   if (!iso) return '';
@@ -694,12 +705,17 @@ function viewStats() {
     cols = [['INT', (s) => s.defInt], ['Pick6', (s) => s.defTD], ['Sacks', (s) => s.sacks]];
   } else if (tab === 'ovr') {
     list = activePlayers().map((p) => ({ id: p.id, s: table[p.id] || E.blankStats() })).sort((a, b) => ovr(b.id) - ovr(a.id));
-    cols = [['OVR', (s, id) => `<b>${ovr(id)}</b>`], ['Trend', (s, id) => {
-      const hist = S.league.history[id] || [];
-      const last = hist[hist.length - 1];
-      return last?.delta ? deltaTag(last.delta) : '—';
-    }]];
-    note = 'Ratings move after every game: beat the odds and they go up. <a href="#/ratings">Rate players ›</a>';
+    cols = [
+      ['OVR', (s, id) => `<b class="g-${grade(ovr(id))}">${ovr(id)}</b>`],
+      ['Pos', (s, id) => h(P(id).position || 'ATH')],
+      ['+/-', (s, id) => {
+        const hist = S.league.history[id] || [];
+        const last = hist[hist.length - 1];
+        return last?.delta ? deltaTag(last.delta) : '—';
+      }],
+      ...E.ATTRS.map((at) => [at.short, (s, id) => `<span class="g-${grade(attrsOf(id)[at.key])}">${attrsOf(id)[at.key]}</span>`]),
+    ];
+    note = 'Madden-style ratings. OVR comes from the nine ratings, weighted by position. <a href="#/ratings">Rate players ›</a>';
   }
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
@@ -758,8 +774,8 @@ function badges(id) {
 function tradingCard(id, { mini = false } = {}) {
   const p = P(id);
   const o = ovr(id);
+  const a = attrsOf(id);
   const s = E.seasonTable(S.db, S.league, S.db.settings.season)[id] || E.blankStats();
-  const c = careerOf(id);
   const front = `
     <div class="tc-face tc-front">
       <div class="tc-top">
@@ -770,28 +786,21 @@ function tradingCard(id, { mini = false } = {}) {
       <div class="tc-name">${h(p.name)}</div>
       ${p.nickname ? `<div class="tc-nick">“${h(p.nickname)}”</div>` : '<div class="tc-nick">&nbsp;</div>'}
       <div class="tc-stats">
+        ${E.keyAttrs(p.position).map((k) => `<div><b class="g-${grade(a[k])}">${a[k]}</b><small>${attrMeta[k].short}</small></div>`).join('')}
+      </div>
+      <div class="tc-foot">HFL · ${h(S.db.settings.season)}</div>
+    </div>`;
+  if (mini) return `<a href="#/p/${id}" class="tcard mini tier-${tier(o)}">${front}</a>`;
+  const back = `
+    <div class="tc-face tc-back">
+      <div class="tc-back-title">${h(p.nickname || p.name)} · Ratings</div>
+      <div class="tc-attrs">${E.ATTRS.map((at) => attrBar(at.key, a[at.key])).join('')}</div>
+      <div class="tc-season">
         <div><b>${s.gp}</b><small>GP</small></div>
         <div><b>${s.w}-${s.l}</b><small>W-L</small></div>
         <div><b>${E.totalTDs(s)}</b><small>TD</small></div>
         <div><b>${s.mvps}</b><small>MVP</small></div>
       </div>
-      <div class="tc-foot">HFL · ${h(S.db.settings.season)}</div>
-    </div>`;
-  if (mini) return `<a href="#/p/${id}" class="tcard mini tier-${tier(o)}">${front}</a>`;
-  const qbr = E.qbRating(c);
-  const back = `
-    <div class="tc-face tc-back">
-      <div class="tc-back-title">${h(p.nickname || p.name)} · Career</div>
-      <table class="tc-table">
-        <tr><td>Games</td><td>${c.gp}</td><td>Record</td><td>${c.w}-${c.l}${c.t ? `-${c.t}` : ''}</td></tr>
-        <tr><td>TDs</td><td>${E.totalTDs(c)}</td><td>MVPs</td><td>${c.mvps}</td></tr>
-        <tr><td>Pass</td><td>${c.comp}/${c.att}</td><td>QB Rtg</td><td>${qbr === null ? '—' : qbr.toFixed(1)}</td></tr>
-        <tr><td>Pass TD</td><td>${c.passTD}</td><td>INT thr</td><td>${c.intThrown}</td></tr>
-        <tr><td>Catches</td><td>${c.rec}</td><td>Drops</td><td>${c.drops}</td></tr>
-        <tr><td>INTs</td><td>${c.defInt}</td><td>Sacks</td><td>${c.sacks}</td></tr>
-      </table>
-      <div class="tc-spark">${sparkline(S.league.history[id] || [], { w: 220, hgt: 50 })}</div>
-      <div class="tc-badges">${badges(id).slice(0, 4).map((b) => `<span>${h(b)}</span>`).join('')}</div>
       <div class="tc-foot">tap to flip</div>
     </div>`;
   return `<div class="tcard big tier-${tier(o)}" data-a="flip"><div class="tc-inner">${front}${back}</div></div>`;
@@ -802,6 +811,44 @@ function viewCards() {
   return `
     ${pageHead(`${list.length} on the roster`, 'Player cards', '<a class="btn sm" href="#/new-player">+ Player</a>')}
     ${list.length ? `<div class="card-grid">${list.map((p) => tradingCard(p.id, { mini: true })).join('')}</div>` : `<section class="card">${empty({ art: 'cards', title: 'No cards printed yet', text: 'Add your crew and everyone gets a card that levels up with every game.', cta: '<a class="btn hot" href="#/new-player">Add a player</a>' })}</section>`}`;
+}
+
+function ratingsSection(id, log) {
+  const p = P(id);
+  const a = attrsOf(id);
+  const last = log.find((x) => x.info.attrChanges?.[id]);
+  const changes = last?.info.attrChanges[id] || {};
+  const byPos = E.positionOveralls(a);
+  const best = Object.entries(byPos).sort((x, y) => y[1] - x[1])[0][0];
+  const order = [...E.keyAttrs(p.position, 9), ...E.ATTR_KEYS.filter((k) => !E.keyAttrs(p.position, 9).includes(k))];
+  return `
+    <section class="card">
+      <div class="row-between"><h3>Ratings</h3>${last ? `<span class="muted small">changes from ${h(fmtDate(last.g.date, { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
+      <div class="attr-list">${order.map((k) => attrBar(k, a[k], last ? changes[k] : null, { label: true })).join('')}</div>
+      <div class="chips-label">OVR at every position</div>
+      <div class="pos-ovrs">${Object.entries(byPos).map(([pos, o]) => `
+        <span class="pos-ovr ${pos === (p.position || 'ATH') ? 'cur' : ''} ${pos === best ? 'best' : ''}"><small>${pos}</small><b class="g-${grade(o)}">${o}</b></span>`).join('')}
+      </div>
+      <p class="muted small">Plays ${h(p.position || 'ATH')}${best !== (p.position || 'ATH') ? `, but his ratings fit <b>${best}</b> best` : ''}. Ratings move after every game: catches build CTH, drops cost it, picks build MCV, sacks build TAK, and beating the odds lifts everyone a little.</p>
+    </section>`;
+}
+
+function careerSection(id) {
+  const c = careerOf(id);
+  if (!c.gp) return '';
+  const qbr = E.qbRating(c);
+  return `
+    <section class="card">
+      <h3>Career</h3>
+      <table class="tc-table career">
+        <tr><td>Games</td><td>${c.gp}</td><td>Record</td><td>${c.w}-${c.l}${c.t ? `-${c.t}` : ''}</td></tr>
+        <tr><td>TDs</td><td>${E.totalTDs(c)}</td><td>MVPs</td><td>${c.mvps}</td></tr>
+        <tr><td>Pass</td><td>${c.comp}/${c.att}</td><td>QB Rtg</td><td>${qbr === null ? '—' : qbr.toFixed(1)}</td></tr>
+        <tr><td>Pass TD</td><td>${c.passTD}</td><td>INT thr</td><td>${c.intThrown}</td></tr>
+        <tr><td>Catches</td><td>${c.rec}</td><td>Drops</td><td>${c.drops}</td></tr>
+        <tr><td>INTs</td><td>${c.defInt}</td><td>Sacks</td><td>${c.sacks}</td></tr>
+      </table>
+    </section>`;
 }
 
 function viewCard(id) {
@@ -817,8 +864,9 @@ function viewCard(id) {
     <p class="muted small center">Tap the card to flip it.</p>
     <div class="badges">${badges(id).map((b) => `<span class="badge">${h(b)}</span>`).join('')}</div>
 
+    ${ratingsSection(id, log)}
     <section class="card">
-      <div class="row-between"><h3>Rating</h3><span class="muted small">started at ${first} → now <b>${ovr(id)}</b></span></div>
+      <div class="row-between"><h3>OVR over time</h3><span class="muted small">started at ${first} → now <b>${ovr(id)}</b></span></div>
       ${sparkline(hist, { w: 600, hgt: 90, cls: 'wide' })}
     </section>
 
@@ -832,6 +880,7 @@ function viewCard(id) {
         </a>`).join('') : `<div class="empty-inline">${ART.whistle}<span>No games yet. His log starts after his first final whistle.</span></div>`}
     </section>
 
+    ${careerSection(id)}
     ${fame.length ? `<section class="card"><h3>In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
     ${id === me() ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>` : ''}
     <a class="btn ghost block" href="#/p/${id}/edit">✎ Edit player</a>`;
@@ -856,10 +905,10 @@ function viewEditPlayer(id) {
           <label>Card emoji <input name="emoji" maxlength="8" value="${h(v.emoji)}" placeholder="⚡"></label>
           <label>Card color <input name="color" type="color" value="${h(v.color || '#ff6b1a')}"></label>
         </div>
-        <label>Starting rating: <b data-out="startOvr">${v.startOvr ?? 70}</b>
+        ${p ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
-        </label>
-        <p class="muted small">${p ? 'This is where he started before any games. To change his rating now, use <a href="#/ratings">Rate players</a>.' : 'Be honest. The app only uses this as a starting point. After that, his rating moves with every game he plays. 70 is an average dude.'}</p>
+        </label>`}
+        <p class="muted small">${p ? 'His nine Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all nine of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
         ${p ? `<label class="check"><input type="checkbox" name="retired" ${p.active === false ? 'checked' : ''}> Retired (hide from RSVPs and cards, keep his stats)</label>` : ''}
         <button class="btn hot block">${p ? 'Save' : '+ Add to the league'}</button>
       </form>
@@ -1159,7 +1208,7 @@ function viewSettings() {
     </section>
     <section class="card">
       <div class="row-between"><h3>Rate players</h3><a class="btn sm hot" href="#/ratings">Open ›</a></div>
-      <p class="muted small">Set everyone's rating yourself, or let the stats decide.</p>
+      <p class="muted small">Madden style: set each guy's nine ratings (speed, catching, throw power…) and position. His OVR is worked out from them.</p>
     </section>
     <section class="card">
       <h3>${S.auth?.managedBy === 'firebase' ? 'Crew password' : 'Crew passcode'}</h3>
@@ -1201,37 +1250,73 @@ function viewSettings() {
 
 function viewRatings() {
   const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
-  const fromStats = E.statRatings(E.seasonTable(S.db, S.league, null));
   return `
     <a class="back" href="#/settings">‹ Settings</a>
     <section class="card">
       <h2>Rate players</h2>
-      <p class="muted">Drag to set anyone's rating (40–99), then save. <b>📊 Stats say</b> is the app's rating from every logged game: how much he produces per game compared to the crew, his win %, and MVPs. After you save, ratings keep moving with every game.</p>
-      <button type="button" class="btn ghost block" data-a="use-stat-ratings" ${Object.keys(fromStats).length ? '' : 'disabled'}>Use the stat rating for everyone</button>
+      <p class="muted">Madden style. Every guy has nine ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays.</p>
       <form data-f="ratings" class="form rate-list">
-        ${list.map((p) => {
-          const cur = ovr(p.id);
-          const sg = fromStats[p.id];
-          return `
-          <div class="rate-row">
-            <div class="rate-head">${avatar(p.id, 'xs')} <b>${h(p.name)}</b>${p.nickname ? ` <span class="muted small">“${h(p.nickname)}”</span>` : ''}<span class="rate-now muted small">now ${cur}</span></div>
-            <div class="rate-ctl">
-              <input type="range" min="40" max="99" value="${cur}" data-pid="${p.id}" data-cur="${cur}" data-ch="rate" aria-label="${h(p.name)} rating">
-              <output class="rate-val tier-${tier(cur)}">${cur}</output>
-            </div>
-            <div class="muted small">${sg
-              ? `📊 Stats say <button type="button" class="linkish" data-a="use-stat" data-p="${p.id}" data-v="${sg.ovr}">${sg.ovr}</button> <span>(${sg.gp} games · tap to use)</span>`
-              : '📊 Needs 2+ games for a stat rating'}</div>
-          </div>`;
-        }).join('')}
+        ${list.map(rateRow).join('')}
         <button class="btn hot block">Save ratings</button>
       </form>
     </section>`;
 }
 
-function setRateSlider(input, value) {
-  input.value = value;
-  CHANGE.rate(input);
+function rateRow(p) {
+  const a = attrsOf(p.id);
+  const o = ovr(p.id);
+  const pos = p.position || 'ATH';
+  return `
+    <details class="rate-row" data-pid="${p.id}" data-pos="${pos}">
+      <summary class="rate-head">
+        ${avatar(p.id, 'xs')}
+        <span class="grow"><b>${h(p.name)}</b>${p.nickname ? ` <span class="muted small">“${h(p.nickname)}”</span>` : ''}</span>
+        <span class="rate-pos">${h(pos)}</span>
+        <output class="rate-val tier-${tier(o)}">${o}</output>
+      </summary>
+      <div class="rate-body">
+        <div class="rate-top">
+          <label>Position
+            <select data-ch="rate-pos">${E.POSITIONS.map((x) => `<option ${x === pos ? 'selected' : ''}>${x}</option>`).join('')}</select>
+          </label>
+          <label>Set all nine
+            <input type="range" min="${E.ATTR_MIN}" max="${E.ATTR_MAX}" value="${Math.round(E.ATTR_KEYS.reduce((t, k) => t + a[k], 0) / 9)}" data-ch="rate-all">
+          </label>
+        </div>
+        ${E.ATTRS.map((at) => `
+          <label class="rate-attr" title="${h(at.label)}">
+            <span class="ra-k">${at.short}</span><span class="ra-l">${h(at.label)}</span>
+            <input type="range" min="${E.ATTR_MIN}" max="${E.ATTR_MAX}" value="${a[at.key]}" data-attr="${at.key}" data-cur="${a[at.key]}" data-ch="rate">
+            <output class="ra-v g-${grade(a[at.key])}">${a[at.key]}</output>
+          </label>`).join('')}
+        <div class="rate-note muted small"></div>
+      </div>
+    </details>`;
+}
+
+// Live preview while dragging: rating colors, the player's OVR and where he'd fit best.
+function refreshRateRow(row) {
+  const attrs = {};
+  let changed = false;
+  row.querySelectorAll('input[data-attr]').forEach((el) => {
+    const v = Number(el.value);
+    attrs[el.dataset.attr] = v;
+    if (v !== Number(el.dataset.cur)) changed = true;
+    const out = el.parentElement.querySelector('output');
+    out.textContent = v;
+    out.className = `ra-v g-${grade(v)}`;
+  });
+  const pos = row.querySelector('[data-ch=rate-pos]').value;
+  if (pos !== row.dataset.pos) changed = true;
+  const o = E.overall(attrs, pos);
+  const head = row.querySelector('.rate-val');
+  head.textContent = o;
+  head.className = `rate-val tier-${tier(o)}`;
+  row.querySelector('.rate-pos').textContent = pos;
+  const byPos = E.positionOveralls(attrs);
+  const best = Object.entries(byPos).sort((x, y) => y[1] - x[1])[0];
+  row.querySelector('.rate-note').innerHTML = `${pos} OVR <b>${o}</b>${best[0] !== pos ? ` · best fit ${best[0]} (${best[1]})` : ''}`;
+  row.classList.toggle('changed', changed);
 }
 
 async function setPasscode(code) {
@@ -1317,12 +1402,6 @@ const A = {
   'stat-tab': ({ t }) => { S.statTab = t; render(); },
   'fame-tab': ({ t }) => { S.fameTab = t; render(); },
   flip: (_, el) => el.classList.toggle('flipped'),
-  'use-stat': ({ p, v }) => setRateSlider($(`input[data-pid="${p}"][data-ch=rate]`), v),
-  'use-stat-ratings': () => {
-    const fromStats = E.statRatings(E.seasonTable(S.db, S.league, null));
-    document.querySelectorAll('input[data-ch=rate]').forEach((el) => fromStats[el.dataset.pid] && setRateSlider(el, fromStats[el.dataset.pid].ovr));
-    toast('Filled in the stat ratings. Hit Save to lock them in.');
-  },
   'remove-pass': () => confirm('Remove the passcode? Anyone with the link will be able to get in.') && run(() => setPasscode(''), 'Passcode removed'),
   export: () => {
     const blob = new Blob([JSON.stringify(S.db, null, 2)], { type: 'application/json' });
@@ -1350,12 +1429,12 @@ function submitLog({ p1, p2 }) {
 }
 
 const CHANGE = {
-  rate: (el) => {
-    const v = Number(el.value);
-    const out = el.parentElement.querySelector('output');
-    out.textContent = v;
-    out.className = `rate-val tier-${tier(v)}`;
-    el.closest('.rate-row').classList.toggle('changed', v !== Number(el.dataset.cur));
+  rate: (el) => refreshRateRow(el.closest('.rate-row')),
+  'rate-pos': (el) => refreshRateRow(el.closest('.rate-row')),
+  'rate-all': (el) => {
+    const row = el.closest('.rate-row');
+    row.querySelectorAll('input[data-attr]').forEach((i) => { i.value = el.value; });
+    refreshRateRow(row);
   },
   season: (el) => { S.season = el.value; render(); },
   'range-out': (el) => { const out = el.form.querySelector(`[data-out="${el.name}"]`); if (out) out.textContent = el.value; },
@@ -1377,12 +1456,18 @@ const FORMS = {
   },
   ratings: (d, form) => {
     const ratings = {};
-    form.querySelectorAll('input[data-ch=rate]').forEach((el) => {
-      if (Number(el.value) !== Number(el.dataset.cur)) ratings[el.dataset.pid] = Number(el.value);
+    form.querySelectorAll('.rate-row').forEach((row) => {
+      const entry = {};
+      row.querySelectorAll('input[data-attr]').forEach((el) => {
+        if (Number(el.value) !== Number(el.dataset.cur)) (entry.attrs ||= {})[el.dataset.attr] = Number(el.value);
+      });
+      const pos = row.querySelector('[data-ch=rate-pos]').value;
+      if (pos !== row.dataset.pos) entry.position = pos;
+      if (Object.keys(entry).length) ratings[row.dataset.pid] = entry;
     });
     const n = Object.keys(ratings).length;
-    if (!n) return toast('No ratings changed');
-    run(() => api('POST', '/api/ratings', { ratings }), `⭐ Saved ${n} rating${n > 1 ? 's' : ''}`);
+    if (!n) return toast('Nothing changed');
+    run(() => api('POST', '/api/ratings', { ratings }), `⭐ Saved ratings for ${n} player${n > 1 ? 's' : ''}`);
   },
   'passcode-set': (d, form) => {
     const code = d.code.trim();
@@ -1413,7 +1498,7 @@ const FORMS = {
     const id = form.dataset.id;
     const body = {
       name: d.name, nickname: d.nickname, position: d.position, number: d.number,
-      emoji: d.emoji, color: d.color, startOvr: Number(d.startOvr),
+      emoji: d.emoji, color: d.color, ...(d.startOvr !== undefined ? { startOvr: Number(d.startOvr) } : {}),
     };
     if (id) body.active = !d.retired;
     const saved = await run(() => api(id ? 'PATCH' : 'POST', id ? `/api/players/${id}` : '/api/players', body), id ? 'Saved' : `${d.nickname || d.name} joined the HFL 🏈`);
@@ -1468,7 +1553,7 @@ document.addEventListener('change', (e) => {
   if (el && CHANGE[el.dataset.ch]) CHANGE[el.dataset.ch](el);
 });
 document.addEventListener('input', (e) => {
-  const el = e.target.closest('[data-ch="range-out"], [data-ch="rate"]');
+  const el = e.target.closest('[data-ch="range-out"], [data-ch="rate"], [data-ch="rate-all"]');
   if (el) CHANGE[el.dataset.ch](el);
 });
 document.addEventListener('submit', (e) => {
