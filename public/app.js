@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION } from './league.js';
+import { ROSTER_VERSION, rsvpOpen } from './league.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
@@ -509,10 +509,22 @@ function rsvpSection(g) {
   const none = act.filter((p) => !status(p.id));
   const m = me();
   const mine = m ? status(m) : '';
-  const chip = (p) => `<button class="pchip ${status(p.id)}" data-a="rsvp-cycle" data-g="${g.id}" data-p="${p.id}">${avatar(p.id, 'xs')} ${h(nick(p.id))}</button>`;
+  const open = rsvpOpen(g);
+  const chip = (p) => (open
+    ? `<button class="pchip ${status(p.id)}" data-a="rsvp-cycle" data-g="${g.id}" data-p="${p.id}">${avatar(p.id, 'xs')} ${h(nick(p.id))}</button>`
+    : `<span class="pchip ${status(p.id)}">${avatar(p.id, 'xs')} ${h(nick(p.id))}</span>`);
+  const [y, mo, d] = g.date.split('-').map(Number);
+  const deadline = new Date(y, mo - 1, d - 1).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (!open) {
+    return `
+    <div class="rsvp">
+      <div class="rsvp-closed">🔒 <span><b>RSVPs are closed.</b> It's game day. Anyone who shows up can still be added to a team below.</span></div>
+      ${ins.length ? `<div class="chips-label">RSVP'd in (${ins.length})</div><div class="chips">${ins.map(chip).join('')}</div>` : ''}
+    </div>`;
+  }
   return `
     <div class="rsvp">
-      ${m ? `
+      ${!open ? `<div class="rsvp-closed">🔒 <span><b>RSVPs are closed.</b> It's game day. Anyone who shows up can still be added to a team below.</span></div>` : m ? `
         <div class="rsvp-me">
           <button class="btn big rsvp-btn ${mine === 'in' ? 'in' : 'ghost'}" data-a="rsvp" data-g="${g.id}" data-p="${m}" data-s="in">I'm in</button>
           <button class="btn big rsvp-btn ${mine === 'out' ? 'out' : 'ghost'}" data-a="rsvp" data-g="${g.id}" data-p="${m}" data-s="out">I'm out</button>
@@ -522,7 +534,7 @@ function rsvpSection(g) {
       <div class="chips-label">In</div><div class="chips">${ins.map(chip).join('') || '<span class="muted small">Nobody yet</span>'}</div>
       ${none.length ? `<div class="chips-label">No reply</div><div class="chips">${none.map(chip).join('')}</div>` : ''}
       ${outs.length ? `<div class="chips-label">Out</div><div class="chips">${outs.map(chip).join('')}</div>` : ''}
-      <p class="muted small">Tap anyone's name to mark them in / out / no reply.</p>
+      ${open ? `<p class="muted small">Tap anyone's name to mark them in / out / no reply. RSVPs close at midnight at the end of ${h(deadline)}.</p>` : ''}
     </div>`;
 }
 
@@ -553,30 +565,33 @@ function teamsSection(g) {
   const hasTeams = g.teams.A.length && g.teams.B.length;
   const onTeam = new Set([...g.teams.A, ...g.teams.B]);
   const bench = ins.filter((p) => !onTeam.has(p.id));
+  const walkOns = activePlayers().filter((p) => g.rsvps[p.id] !== 'in' && !onTeam.has(p.id));
+  const pool = new Set([...ins.map((p) => p.id), ...onTeam]).size;
+  const walkOnChips = !rsvpOpen(g) && walkOns.length ? `<div class="chips-label">Walk-ons (didn't RSVP but showed up)</div><div class="chips">${walkOns.map((p) => `<button class="pchip" data-a="bench-add" data-g="${g.id}" data-p="${p.id}">+ ${h(nick(p.id))}</button>`).join('')}</div>` : '';
   return `
     <div class="divider"></div>
     ${sec('Teams', hasTeams ? '<span class="sec-link muted">Tap a player to swap sides</span>' : '')}
     ${hasTeams ? `
       ${teamColumns(g, { editable: true })}
       ${bench.length ? `<div class="chips-label">In but not on a team</div><div class="chips">${bench.map((p) => `<button class="pchip" data-a="bench-add" data-g="${g.id}" data-p="${p.id}">+ ${h(nick(p.id))}</button>`).join('')}</div>` : ''}
+      ${walkOnChips}
       <div class="btn-row">
         <button class="btn ghost" data-a="auto-teams" data-g="${g.id}">Reshuffle</button>
         <button class="btn hot grow" data-a="start" data-g="${g.id}">▶ Start game</button>
       </div>` : `
       <p class="muted">Once guys are in, the app splits them into the fairest teams it can find from everyone's rating.</p>
-      <button class="btn hot block" data-a="auto-teams" data-g="${g.id}" ${ins.length < 2 ? 'disabled' : ''}>Make balanced teams · ${ins.length} in</button>`}`;
+      ${onTeam.size ? `<p class="muted small">Added so far: ${[...onTeam].map((pid) => h(nick(pid))).join(', ')}</p>` : ''}
+      ${walkOnChips}
+      <button class="btn hot block" data-a="auto-teams" data-g="${g.id}" ${pool < 2 ? 'disabled' : ''}>Make balanced teams · ${pool} ${pool === 1 ? 'player' : 'players'}</button>`}`;
 }
 
 function liveSection(g) {
   const info = gameInfo(g);
-  const m = me();
-  const keeper = g.scorekeeperId;
-  const isKeeper = !keeper || keeper === m;
   const events = [...g.events].reverse();
   return `
     ${scoreboard(g)}
-    ${keeper ? `<div class="muted small center">📝 Scorekeeper: ${h(nick(keeper))}</div>` : ''}
-    ${isKeeper ? logger(g) : `<details class="log-anyway"><summary>Log a play anyway</summary>${logger(g)}</details>`}
+    <div class="muted small center">📝 Everyone keeps score: log any play you see, including your own.</div>
+    ${logger(g)}
     ${sec('Play by play', `<span class="sec-link muted">${events.length} logged</span>`)}
     ${events.length ? `<ul class="feed">${events.map((ev) => eventRow(g, ev, true)).join('')}</ul>` : `<div class="empty-inline">${ART.whistle}<span>No plays logged yet. Pick a play type above to start.</span></div>`}
     <details class="card-lite"><summary>Rosters & live box score</summary>${boxScore(g, info)}</details>
@@ -605,7 +620,7 @@ function logger(g) {
         ${sides.map((side) => `
           <div>
             <div class="chips-label">${h(teamName(g, side))}</div>
-            ${g.teams[side].filter((id) => id !== L.p1).map((id) => `<button class="log-player" data-a="log-pick" data-p="${id}">${avatar(id, 'xs')} ${h(nick(id))}</button>`).join('')}
+            ${g.teams[side].filter((id) => id !== L.p1).sort((a, b) => (b === me()) - (a === me())).map((id) => `<button class="log-player ${id === me() ? 'is-me' : ''}" data-a="log-pick" data-p="${id}">${avatar(id, 'xs')} ${h(nick(id))}${id === me() ? ' <small>(you)</small>' : ''}</button>`).join('')}
           </div>`).join('')}
       </div>
       <div class="btn-row">
@@ -620,7 +635,7 @@ function eventRow(g, ev, editable) {
   return `
     <li class="ev ev-${side}">
       <span class="ev-team">${h(teamName(g, side).slice(0, 3).toUpperCase())}</span>
-      <span class="ev-body">${describeEvent(ev)}</span>
+      <span class="ev-body">${describeEvent(ev)}${ev.by ? `<span class="ev-by">logged by ${h(ev.by === me() ? 'you' : nick(ev.by))}</span>` : ''}</span>
       <a class="ev-act" href="#/fame/new?g=${g.id}&e=${ev.id}" title="Save to the Hall of Fame">🏛️</a>
       ${editable ? `<button class="ev-act" data-a="undo-event" data-g="${g.id}" data-e="${ev.id}" title="Delete this play">✕</button>` : ''}
     </li>`;
@@ -650,7 +665,11 @@ function finalSection(g) {
     ${boxScore(g, info)}
     <p class="muted small">▲▼ = OVR change from this game (result vs. the odds, plus how much he balled out).</p>
     <details class="card-lite"><summary>Play by play (${g.events.length})</summary>
-      <ul class="feed">${[...g.events].reverse().map((ev) => eventRow(g, ev, false)).join('')}</ul>
+      <ul class="feed">${[...g.events].reverse().map((ev) => eventRow(g, ev, !!me() && ev.by === me())).join('')}</ul>
+    </details>
+    <details class="card-lite" ${S.log?.gameId === g.id ? 'open' : ''}><summary>Add a play that didn't get logged</summary>
+      <p class="muted small">Forgot to log something? Add it here. Stats, ratings and awards update automatically.</p>
+      ${logger(g)}
     </details>
     <a class="btn block" href="#/wall">Talk trash about this one ›</a>`;
 }
@@ -1651,7 +1670,7 @@ const A = {
     const name = prompt('Team name', teamName(game, side));
     if (name?.trim()) run(() => api('PATCH', `/api/games/${g}`, { teamNames: { [side]: name.trim() } }));
   },
-  start: ({ g }) => run(() => api('POST', `/api/games/${g}/start`, { scorekeeperId: me() }), "🏈 Game on! You're the scorekeeper"),
+  start: ({ g }) => run(() => api('POST', `/api/games/${g}/start`, {}), '🏈 Game on! Anyone can log plays'),
   'log-type': ({ g, t }) => { S.log = { gameId: g, type: t, p1: null }; render(); },
   'log-cancel': () => { S.log = null; render(); },
   'log-pick': ({ p }) => {
@@ -1706,6 +1725,10 @@ function submitLog({ p1, p2 }) {
   const L = S.log;
   S.log = null;
   const t = E.EVENT_TYPES[L.type];
+  const game = S.db.games.find((x) => x.id === L.gameId);
+  // Everyone can log, so two people might log the same play. Double-check recent twins.
+  const twin = game?.events.find((e) => e.type === L.type && e.p1 === p1 && (e.p2 || null) === (p2 || null) && Date.now() - Date.parse(e.ts) < 90000);
+  if (twin && !confirm(`${twin.by ? (twin.by === me() ? 'You' : nick(twin.by)) : 'Someone'} already logged "${t.label}: ${nick(p1)}${p2 ? ` / ${nick(p2)}` : ''}" ${Math.max(1, Math.round((Date.now() - Date.parse(twin.ts)) / 1000))}s ago. Log it again?`)) { render(); return; }
   run(async () => {
     await api('POST', `/api/games/${L.gameId}/events`, { type: L.type, p1, p2, by: me() });
     const g = S.db.games.find((x) => x.id === L.gameId);

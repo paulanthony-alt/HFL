@@ -31,7 +31,7 @@ test('full game day: players → RSVP → teams → live stats → final → MVP
     assert.equal(r.status, 200);
     ids.push(r.result.id);
   }
-  const g = (await call('POST', '/api/games', { date: '2026-10-04', time: '18:00', location: 'Park' })).result;
+  const g = (await call('POST', '/api/games', { date: '2099-10-04', time: '18:00', location: 'Park' })).result;
   assert.equal(g.status, 'scheduled');
 
   for (const id of ids) await call('POST', `/api/games/${g.id}/rsvp`, { playerId: id, status: 'in' });
@@ -258,4 +258,33 @@ test('player card photos: set, replace, remove', async () => {
   assert.equal(gone.result.photo, null);
   assert.equal((await fetch(base + second.result.photo)).status, 404);
   assert.equal((await call('POST', `/api/players/${p.id}/photo`, { image: 'data:text/html;base64,PHNjcmlwdD4=' })).status, 400);
+});
+
+test('RSVPs close when game day starts, but walk-ons can still join a team', async () => {
+  const { db } = await call('GET', '/api/state');
+  const [a, b, c] = db.players;
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const g = (await call('POST', '/api/games', { date: today })).result;
+  const r = await call('POST', `/api/games/${g.id}/rsvp`, { playerId: a.id, status: 'in' });
+  assert.equal(r.status, 400);
+  assert.match(r.error, /game day/);
+  const t = await call('PUT', `/api/games/${g.id}/teams`, { teams: { A: [a.id], B: [b.id, c.id] } });
+  assert.equal(t.status, 200, 'teams (including walk-ons) can still be set on game day');
+  const shuffled = await call('POST', `/api/games/${g.id}/auto-teams`);
+  assert.equal(shuffled.status, 200);
+  assert.deepEqual([...shuffled.result.teams.A, ...shuffled.result.teams.B].sort(), [a.id, b.id, c.id].sort(), 'reshuffle keeps walk-ons');
+  const tomorrow = new Date(Date.now() + 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const g2 = (await call('POST', '/api/games', { date: tomorrow })).result;
+  assert.equal((await call('POST', `/api/games/${g2.id}/rsvp`, { playerId: a.id, status: 'in' })).status, 200, 'open the day before');
+  await call('DELETE', `/api/games/${g.id}`);
+  await call('DELETE', `/api/games/${g2.id}`);
+});
+
+test('anyone can log plays, including after the final whistle', async () => {
+  const { db } = await call('GET', '/api/state');
+  const g = db.games.find((x) => x.status === 'final');
+  const [qa, wa] = g.teams.A;
+  const r = await call('POST', `/api/games/${g.id}/events`, { type: 'catch', p1: qa, p2: wa, by: g.teams.B[0] });
+  assert.equal(r.status, 200);
+  assert.equal(r.result.by, g.teams.B[0]);
 });

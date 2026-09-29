@@ -298,6 +298,7 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   on('POST', '/api/games/:id/rsvp', (db, b, { id }) => {
     const g = game(db, id);
     if (g.status !== 'scheduled') throw bad('RSVPs are closed once the game starts');
+    if (!rsvpOpen(g)) throw bad("RSVPs closed at midnight: it's game day. Walk-ons can still be added to a team");
     player(db, b.playerId);
     if (b.status === null || b.status === '') delete g.rsvps[b.playerId];
     else g.rsvps[b.playerId] = oneOf(b.status, ['in', 'out'], 'status');
@@ -307,7 +308,9 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     const g = game(db, id);
     if (g.status !== 'scheduled') throw bad('teams are locked once the game starts');
     const league = computeLeague(db);
-    const ins = db.players.filter((p) => p.active !== false && g.rsvps[p.id] === 'in');
+    // Everyone who RSVP'd in, plus anyone already placed on a team (game-day walk-ons).
+    const placed = new Set([...g.teams.A, ...g.teams.B]);
+    const ins = db.players.filter((p) => p.active !== false && (g.rsvps[p.id] === 'in' || placed.has(p.id)));
     if (ins.length < 2) throw bad('need at least 2 players in to make teams');
     const res = balanceTeams(ins.map((p) => ({ id: p.id, elo: league.elo[p.id], position: p.position })));
     g.teams = { A: res.A, B: res.B };
@@ -456,6 +459,14 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
 
   return routes;
 }
+
+// Today's date where the app is running ("2026-09-29"), for the RSVP deadline.
+export const localToday = () => {
+  const d = new Date();
+  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+// RSVPs stay open until game day starts (midnight at the start of the game's date).
+export const rsvpOpen = (g, today = localToday()) => g.status === 'scheduled' && today < g.date;
 
 export function matchRoute(routes, method, path) {
   for (const r of routes) {
