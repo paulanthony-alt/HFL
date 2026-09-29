@@ -51,7 +51,9 @@ test('full game day: players → RSVP → teams → live stats → final → MVP
   assert.equal(teams.B.length, 5);
 
   assert.equal((await call('POST', `/api/games/${g.id}/events`, { type: 'catch', p1: teams.A[0], p2: teams.A[1] })).status, 400, 'cannot log before kickoff');
-  await call('POST', `/api/games/${g.id}/start`, { scorekeeperId: ids[0] });
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  await call('PATCH', `/api/games/${g.id}`, { date: today }); // it's game day
+  assert.equal((await call('POST', `/api/games/${g.id}/start`, {})).status, 200);
 
   const td = await call('POST', `/api/games/${g.id}/events`, { type: 'pass_td', p1: teams.A[0], p2: teams.A[1] });
   assert.equal(td.status, 200);
@@ -327,4 +329,23 @@ test('PIN lock: players edit only their own profile; ratings and positions are c
   const after = (await call('GET', '/api/state')).db.players.find((p) => p.id === kellen.id);
   assert.equal(after.pinHash, null, 'PIN reset, Kellen can claim again');
   assert.equal((await call('POST', '/api/import', { db: { players: [], games: [], posts: [], plays: [], fame: [] } })).status, 403, 'restoring a backup is commissioner-only');
+});
+
+test("games can't start before game day, and an early start can be undone", async () => {
+  const { db } = await call('GET', '/api/state');
+  const [a, b] = db.players;
+  const g = (await call('POST', '/api/games', { date: '2099-01-01' })).result;
+  await call('PUT', `/api/games/${g.id}/teams`, { teams: { A: [a.id], B: [b.id] } });
+  const r = await call('POST', `/api/games/${g.id}/start`, {});
+  assert.equal(r.status, 400);
+  assert.match(r.error, /not game day/);
+  // a game started on game day whose date then moved out (like one started early before this rule)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  await call('PATCH', `/api/games/${g.id}`, { date: today });
+  assert.equal((await call('POST', `/api/games/${g.id}/start`, {})).status, 200);
+  await call('PATCH', `/api/games/${g.id}`, { date: '2099-01-01' });
+  const u = await call('POST', `/api/games/${g.id}/unstart`);
+  assert.equal(u.result.changed, true);
+  assert.equal(u.db.games.find((x) => x.id === g.id).status, 'scheduled', 'back to scheduled, RSVPs open');
+  await call('DELETE', `/api/games/${g.id}`);
 });

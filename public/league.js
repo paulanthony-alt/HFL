@@ -372,10 +372,20 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     const g = game(db, id);
     if (g.status !== 'scheduled') throw bad('game already started');
     if (!g.teams.A.length || !g.teams.B.length) throw bad('pick teams first');
+    if (localToday() < g.date) throw bad("It's not game day yet. You can start the game on game day");
     g.status = 'live';
     g.startedAt = now();
     if (b.scorekeeperId) g.scorekeeperId = player(db, b.scorekeeperId, 'scorekeeper').id;
     return g;
+  });
+  // Undo a game that was started before game day by mistake (only if nothing was logged yet),
+  // so RSVPs reopen. The app calls this on its own when it spots one.
+  on('POST', '/api/games/:id/unstart', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'live' || g.events.length || localToday() >= g.date) return { changed: false };
+    g.status = 'scheduled';
+    delete g.startedAt;
+    return { changed: true };
   });
   on('POST', '/api/games/:id/final', (db, b, { id }) => {
     const g = game(db, id);

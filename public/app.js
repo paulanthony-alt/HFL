@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION, rsvpOpen, commissionerId } from './league.js';
+import { ROSTER_VERSION, rsvpOpen, commissionerId, localToday } from './league.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
@@ -289,6 +289,12 @@ function hydrateImages() {
 }
 
 // One-time: make the league the HFL crew (see HFL_ROSTER in league.js).
+// Games started before game day (from before that was blocked) go back to scheduled so RSVPs reopen.
+function undoEarlyStarts() {
+  const early = S.db.games.filter((g) => g.status === 'live' && !g.events.length && localToday() < g.date);
+  for (const g of early) api('POST', `/api/games/${g.id}/unstart`).catch(() => {});
+}
+
 function ensureRoster() {
   if ((S.db.settings.rosterVersion || 0) >= ROSTER_VERSION || ensureRoster.running) return;
   ensureRoster.running = true;
@@ -596,7 +602,9 @@ function teamsSection(g) {
       ${walkOnChips}
       <div class="btn-row">
         <button class="btn ghost" data-a="auto-teams" data-g="${g.id}">Reshuffle</button>
-        <button class="btn hot grow" data-a="start" data-g="${g.id}">▶ Start game</button>
+        ${localToday() >= g.date
+          ? `<button class="btn hot grow" data-a="start" data-g="${g.id}">▶ Start game</button>`
+          : `<span class="start-later grow">▶ You can start the game on game day (${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))})</span>`}
       </div>` : `
       <p class="muted">Once guys are in, the app splits them into the fairest teams it can find from everyone's rating.</p>
       ${onTeam.size ? `<p class="muted small">Added so far: ${[...onTeam].map((pid) => h(nick(pid))).join(', ')}</p>` : ''}
@@ -2015,6 +2023,7 @@ async function bootFirebase() {
     }
     render();
     ensureRoster();
+    undoEarlyStarts();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach Firebase', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
   }
@@ -2038,6 +2047,7 @@ async function boot() {
     }
     render();
     ensureRoster();
+    undoEarlyStarts();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach the HFL server', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
   }
