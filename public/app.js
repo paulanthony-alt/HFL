@@ -299,7 +299,11 @@ function ensureRoster() {
   if ((S.db.settings.rosterVersion || 0) >= ROSTER_VERSION || ensureRoster.running) return;
   ensureRoster.running = true;
   api('POST', '/api/setup-roster')
-    .then((r) => { if (r?.changed) toast('🏈 The HFL roster is set. Tap “Who are you?” to pick yourself'); })
+    .then((r) => {
+      if (!r?.changed) return;
+      const n = r.names || [];
+      toast(n.length ? `🏈 ${n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n.at(-1)}` : n[0]} joined the HFL` : '🏈 The HFL roster is set. Tap “Who are you?” to pick yourself');
+    })
     .catch(() => {})
     .finally(() => { ensureRoster.running = false; });
 }

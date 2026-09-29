@@ -232,20 +232,20 @@ test('roster setup: keeps the crew, clears everyone else, runs only once', async
     const first = await post('/api/setup-roster');
     assert.equal(first.result.changed, true);
     const { db } = first;
-    assert.deepEqual(db.players.map((p) => p.name), ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane'], 'names tidied to the roster spelling');
+    assert.deepEqual(db.players.map((p) => p.name), ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah'], 'names tidied to the roster spelling');
     assert.equal(db.players.find((p) => p.name === 'Paul').id, paul.result.id, 'existing player kept with his stats and nickname');
     assert.equal(db.players.find((p) => p.name === 'Paul').nickname, 'Big P');
     assert.equal(db.games.length, 0, 'demo games gone');
     assert.equal(db.posts.length, 0, 'demo posts gone');
     assert.equal(db.plays.length, 0, 'demo plays gone');
     assert.equal(db.fame.length, 0, 'demo hall of fame gone');
-    assert.equal(new Set(db.players.map((p) => p.color)).size, 11, 'everyone gets their own card color');
+    assert.equal(new Set(db.players.map((p) => p.color)).size, 14, 'everyone gets their own card color');
 
     const newbie = await post('/api/players', { name: 'Cousin Joey' });
     const again = await post('/api/setup-roster');
     assert.equal(again.result.changed, false);
     assert.ok(again.db.players.some((p) => p.id === newbie.result.id), 'players added later are never removed');
-    assert.equal(again.db.players.length, 12);
+    assert.equal(again.db.players.length, 15);
   } finally {
     s.closeAllConnections();
     s.close();
@@ -348,4 +348,27 @@ test("games can't start before game day, and an early start can be undone", asyn
   assert.equal(u.result.changed, true);
   assert.equal(u.db.games.find((x) => x.id === g.id).status, 'scheduled', 'back to scheduled, RSVPs open');
   await call('DELETE', `/api/games/${g.id}`);
+});
+
+test('roster update: an already set-up league just gains Teddy, Bobby and Noah', async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-roster2-'));
+  fs.writeFileSync(path.join(d, 'db.json'), JSON.stringify({
+    version: 5, settings: { crewName: 'HFL', season: '2026', rosterVersion: 1 },
+    players: ['Kellen', 'Max', 'Paul', 'Cousin Joey', 'noah'].map((name, i) => ({ id: `p${i}`, name, active: true })),
+    games: [{ id: 'g1', date: '2099-01-01', status: 'scheduled', rsvps: { p0: 'in' }, teams: { A: [], B: [] }, events: [], mvpVotes: {} }], posts: [], plays: [], fame: [],
+  }));
+  const s = await createHflServer({ dataDir: d, passcode: '' });
+  await new Promise((r) => s.listen(0, r));
+  try {
+    const res = await (await fetch(`http://localhost:${s.address().port}/api/setup-roster`, { method: 'POST' })).json();
+    assert.deepEqual(res.result.names, ['Teddy', 'Bobby']);
+    const names = res.db.players.map((p) => p.name);
+    assert.deepEqual(names, ['Kellen', 'Max', 'Paul', 'Cousin Joey', 'noah', 'Teddy', 'Bobby'], 'nobody removed, Noah not duplicated');
+    assert.equal(res.db.games[0].rsvps.p0, 'in', 'games and RSVPs untouched');
+    const again = await (await fetch(`http://localhost:${s.address().port}/api/setup-roster`, { method: 'POST' })).json();
+    assert.equal(again.result.changed, false);
+  } finally {
+    s.closeAllConnections(); s.close();
+    fs.rmSync(d, { recursive: true, force: true });
+  }
 });

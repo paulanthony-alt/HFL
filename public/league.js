@@ -8,9 +8,12 @@ const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
 // The HFL crew. The first time the app opens a league without this roster
 // (settings.rosterVersion), it clears out everyone else and adds these guys.
-export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane'];
-export const ROSTER_VERSION = 1;
-const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0'];
+export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah'];
+// Version 1 set up the original crew (and cleared everyone else). Later versions only add
+// the new guys listed here: nobody is ever removed again.
+export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'] };
+export const ROSTER_VERSION = 2;
+const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8'];
 const FAME_CATEGORIES = ['best', 'dumb', 'drop'];
 const ROUTE_STYLES = ['route', 'motion', 'block'];
 
@@ -193,7 +196,25 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   // then adds whoever on the roster is missing. Safe to call repeatedly: once the
   // roster version is recorded it does nothing, so players added later are never touched.
   on('POST', '/api/setup-roster', (db, b, params, fx) => {
-    if ((db.settings.rosterVersion || 0) >= ROSTER_VERSION) return { changed: false };
+    const have = db.settings.rosterVersion || 0;
+    if (have >= ROSTER_VERSION) return { changed: false };
+    if (have >= 1) {
+      // Already set up: just add anyone new who isn't here yet.
+      const names = new Set(db.players.map((p) => String(p.name || '').trim().toLowerCase()));
+      const added = [];
+      for (let v = have + 1; v <= ROSTER_VERSION; v++) {
+        for (const name of ROSTER_ADDITIONS[v] || []) {
+          if (names.has(name.toLowerCase())) continue;
+          names.add(name.toLowerCase());
+          const i = HFL_ROSTER.indexOf(name);
+          db.players.push({ id: newId(), name, nickname: '', number: '', position: 'ATH', startOvr: 70, emoji: '',
+            color: ROSTER_COLORS[i % ROSTER_COLORS.length], active: true, createdAt: now() });
+          added.push(name);
+        }
+      }
+      db.settings.rosterVersion = ROSTER_VERSION;
+      return { changed: added.length > 0, removed: 0, added: added.length, names: added };
+    }
     const wanted = new Map(HFL_ROSTER.map((n) => [n.toLowerCase(), n]));
     const keep = new Map(); // roster name → existing player (first one wins)
     for (const p of db.players) {
