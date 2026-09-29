@@ -1154,7 +1154,7 @@ function viewCard(id) {
     ${fame.length ? `<section class="card"><h3>In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
     ${id === me() && pinOk(id) ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>
       <a class="btn ghost block" href="#/p/${id}/edit">📸 ${photoOf(p) ? 'Change' : 'Add'} your card photo</a>` : ''}
-    ${canEditProfile(id) ? `<a class="btn ghost block" href="#/p/${id}/edit">✎ Edit ${id === me() ? 'my profile' : 'player'}</a>` : `<p class="muted small center">🔒 Only ${h(p.name)}${commish() ? ` or ${h(P(commish()).name)} (commissioner)` : ''} can edit this profile.</p>`}`;
+    ${canEditProfile(id) ? `<a class="btn ghost block" href="#/p/${id}/edit">✎ Edit ${id === me() ? 'my profile' : 'player'}</a>` : `<p class="muted small center">🔒 Only ${h(p.name)} can edit this profile.</p>`}`;
 }
 
 function viewEditPlayer(id) {
@@ -1164,7 +1164,7 @@ function viewEditPlayer(id) {
   const boss = iAmCommish();
   if (p && !canEditProfile(p.id)) {
     return `<a class="back" href="#/p/${p.id}">‹ Back</a>
-      <section class="card">${empty({ art: 'cards', title: 'Locked', text: `Only ${h(p.name)} can edit his own profile${commish() ? `, or ${h(P(commish()).name)} as commissioner` : ''}. ${me() === p.id ? 'Enter your PIN first.' : ''}`, cta: me() === p.id || !me() ? `<a class="btn hot" href="#/unlock/${p.id}">${p.pinHash ? 'Enter PIN' : 'Create PIN'}</a>` : '' })}</section>`;
+      <section class="card">${empty({ art: 'cards', title: 'Locked', text: `Only ${h(p.name)} can edit his own profile. ${me() === p.id ? 'Enter your PIN first.' : ''}`, cta: me() === p.id || !me() ? `<a class="btn hot" href="#/unlock/${p.id}">${p.pinHash ? 'Enter PIN' : 'Create PIN'}</a>` : '' })}</section>`;
   }
   const lockNote = (what) => `<span class="lock-note">🔒 ${what}</span>`;
   return `
@@ -1175,7 +1175,7 @@ function viewEditPlayer(id) {
         ${!p || boss ? `<label>Name <input name="name" required maxlength="40" value="${h(v.name)}" placeholder="Marcus Hill"></label>` : ''}
         <label>Nickname <input name="nickname" maxlength="40" value="${h(v.nickname)}" placeholder="Slingshot"></label>
         <div class="form-row">
-          ${boss ? `<label>Position <select name="position">${E.POSITIONS.map((x) => `<option ${v.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>` : `<label>Position ${lockNote(`${h(v.position || 'ATH')} · set by the commissioner`)}</label>`}
+          ${boss ? `<label>Position <select name="position">${E.POSITIONS.map((x) => `<option ${v.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>` : `<label>Position ${lockNote(`${h(v.position || 'ATH')} · locked`)}</label>`}
           <label>Jersey # <input name="number" type="number" min="0" max="99" inputmode="numeric" value="${h(v.number)}"></label>
         </div>
         <div class="form-row">
@@ -1185,7 +1185,7 @@ function viewEditPlayer(id) {
         ${p || !boss ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>`}
-        <p class="muted small">${!boss ? '🔒 Ratings and position are locked: only the app (after every game) and the commissioner can change them.' : p ? 'His eleven Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
+        <p class="muted small">${!boss ? '🔒 Ratings and position are locked. The app updates them after every game.' : p ? 'His eleven Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
         ${p || boss ? `<div class="photo-field">
           ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
           <label class="grow">Card photo <input type="file" name="photo" accept="image/*"></label>
@@ -1228,7 +1228,6 @@ function viewUnlock(id) {
   const p = S.db.players.find((x) => x.id === id);
   if (!p) return `<p class="muted">Player not found. <a href="#/me">Back</a></p>`;
   const claimed = !!p.pinHash;
-  const boss = commish() === id;
   return `
     <a class="back" href="#/me">‹ Who are you?</a>
     <section class="card unlock">
@@ -1236,13 +1235,13 @@ function viewUnlock(id) {
       <h2>${claimed ? `Hey ${h(nick(id))}` : `Claim ${h(p.name)}`}</h2>
       <p class="muted">${claimed
         ? 'Enter your PIN. This phone will remember it.'
-        : `Create a 4-digit PIN. After this, only you${boss ? '' : ' (and the commissioner)'} can change ${h(p.name)}'s nickname, photo and card.${boss ? ' <b>You\'re the commissioner</b>, so this PIN also unlocks ratings and editing anyone.' : ''}`}</p>
+        : `Create a 4-digit PIN. After this, only you can change ${h(p.name)}'s nickname, photo and card.`}</p>
       <form data-f="unlock" data-id="${id}" data-claimed="${claimed ? 1 : ''}" class="form">
         <label>${claimed ? 'PIN' : 'New PIN'} <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" required autocomplete="off" class="pin-input" autofocus></label>
         ${claimed ? '' : '<label>Type it again <input name="pin2" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" required autocomplete="off" class="pin-input"></label>'}
         <button class="btn hot block">${claimed ? 'Unlock' : 'Create PIN & claim'}</button>
       </form>
-      <p class="muted small">${claimed ? `Forgot it? Ask ${commish() && commish() !== id ? h(P(commish()).name) : 'the commissioner'} to reset it.` : "Pick something you'll remember. Don't use someone else's name!"}</p>
+      <p class="muted small">${claimed ? 'Forgot it? Say so in the group chat and it can be reset.' : "Pick something you'll remember. Don't use someone else's name!"}</p>
     </section>`;
 }
 
@@ -1260,7 +1259,7 @@ function viewMe() {
       <p class="muted small">🔒 = claimed with a PIN.</p>
       <p class="muted">This phone will RSVP, vote and post as this player.</p>
       <div class="me-grid">${list.map((p) => `
-        <button class="me-opt ${m === p.id ? 'on' : ''}" data-a="set-me" data-p="${p.id}">${avatar(p.id, 'lg')}<span>${p.pinHash ? '🔒 ' : ''}${h(p.name)}${commish() === p.id ? ' <small>(commish)</small>' : ''}</span>${p.nickname ? `<small>“${h(p.nickname)}”</small>` : ''}</button>`).join('')}
+        <button class="me-opt ${m === p.id ? 'on' : ''}" data-a="set-me" data-p="${p.id}">${avatar(p.id, 'lg')}<span>${p.pinHash ? '🔒 ' : ''}${h(p.name)}</span>${p.nickname ? `<small>“${h(p.nickname)}”</small>` : ''}</button>`).join('')}
       </div>
       <a class="btn ghost block" href="#/new-player">Not on the list? Add yourself</a>
     </section>`;
@@ -1513,7 +1512,7 @@ function viewSettings() {
     </section>
     <section class="card">
       <div class="row-between"><h3>Roster (${players.length})</h3><a class="btn sm" href="#/new-player">+ Player</a></div>
-      <p class="muted small">Commissioner: <b>${commish() ? h(P(commish()).name) : 'nobody yet'}</b>. 🔒 = claimed with a PIN.</p>
+      <p class="muted small">🔒 = claimed with a PIN.</p>
       ${players.map((p) => `
         <div class="row-link">${avatar(p.id, 'xs')} <a class="grow" href="#/p/${p.id}">${p.pinHash ? '🔒 ' : ''}${h(p.name)} ${p.active === false ? '<span class="muted small">(retired)</span>' : ''}</a>
           ${iAmCommish() && p.pinHash && p.id !== me() ? `<button class="btn sm ghost" data-a="reset-pin" data-p="${p.id}">Reset PIN</button>` : ''}<span class="muted">${ovr(p.id)}</span></div>`).join('') || '<p class="muted">No players yet.</p>'}
@@ -1604,7 +1603,7 @@ function viewRatings() {
     const boss = commish();
     return `
       <a class="back" href="#/settings">‹ Settings</a>
-      <section class="card">${empty({ art: 'chart', title: 'Ratings are locked', text: `Only the app (it updates everyone's ratings after every game) and the commissioner${boss ? `, ${h(P(boss).name)},` : ''} can change ratings.${boss && me() === boss ? ' Enter your PIN to unlock.' : ''}`, cta: boss && (me() === boss || S.me === boss) ? `<a class="btn hot" href="#/unlock/${boss}">Enter PIN</a>` : '<a class="btn ghost" href="#/stats">See everyone\'s ratings</a>' })}</section>`;
+      <section class="card">${empty({ art: 'chart', title: 'Ratings are locked', text: `The app updates everyone's ratings after every game.${boss && S.me === boss ? ' Enter your PIN to unlock.' : ''}`, cta: boss && (me() === boss || S.me === boss) ? `<a class="btn hot" href="#/unlock/${boss}">Enter PIN</a>` : '<a class="btn ghost" href="#/stats">See everyone\'s ratings</a>' })}</section>`;
   }
   return `
     <a class="back" href="#/settings">‹ Settings</a>

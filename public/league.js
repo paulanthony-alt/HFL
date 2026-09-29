@@ -34,12 +34,12 @@ export function whoIsAsking(db, b) {
 }
 const isCommish = (db, id) => !!id && id === commissionerId(db);
 function requireCommish(db, b, what) {
-  if (!isCommish(db, whoIsAsking(db, b))) throw forbidden(`Only the commissioner can ${what}`);
+  if (!isCommish(db, whoIsAsking(db, b))) throw forbidden(`That's locked: you can't ${what}`);
 }
 function requireSelfOrCommish(db, b, targetId, what) {
   const who = whoIsAsking(db, b);
   if (who === targetId || isCommish(db, who)) return;
-  throw forbidden(who ? `Only ${db.players.find((p) => p.id === targetId)?.name || 'that player'} (or the commissioner) can ${what}` : `Enter your PIN to ${what}`);
+  throw forbidden(who ? `Only ${db.players.find((p) => p.id === targetId)?.name || 'that player'} can ${what}` : `Enter your PIN to ${what}`);
 }
 // Profile stuff a player controls himself; everything else on a player is commissioner-only.
 const SELF_FIELDS = ['nickname', 'number', 'emoji', 'color', 'cardStyle'];
