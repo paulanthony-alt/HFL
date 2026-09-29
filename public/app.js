@@ -606,6 +606,7 @@ function teamsSection(g) {
       ${walkOnChips}
       <div class="btn-row">
         <button class="btn ghost" data-a="auto-teams" data-g="${g.id}">Reshuffle</button>
+        ${g.prevTeams ? `<button class="btn ghost" data-a="undo-teams" data-g="${g.id}">↶ Undo shuffle</button>` : ''}
         ${localToday() >= g.date
           ? `<button class="btn hot grow" data-a="start" data-g="${g.id}">▶ Start game</button>`
           : `<span class="start-later grow">▶ You can start the game on game day (${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))})</span>`}
@@ -1721,6 +1722,7 @@ const A = {
     const next = { '': 'in', in: 'out', out: null }[cur];
     run(() => api('POST', `/api/games/${g}/rsvp`, { playerId: p, status: next }));
   },
+  'undo-teams': ({ g }) => run(() => api('POST', `/api/games/${g}/undo-teams`), '↶ Back to the previous teams'),
   'auto-teams': ({ g }) => run(() => api('POST', `/api/games/${g}/auto-teams`), '⚖️ Teams balanced'),
   swap: ({ g, p }) => {
     const game = S.db.games.find((x) => x.id === g);

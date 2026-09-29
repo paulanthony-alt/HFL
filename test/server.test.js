@@ -372,3 +372,19 @@ test('roster update: an already set-up league just gains Teddy, Bobby and Noah',
     fs.rmSync(d, { recursive: true, force: true });
   }
 });
+
+test('undo shuffle brings back the previous teams (and tapping again redoes)', async () => {
+  const { db } = await call('GET', '/api/state');
+  const ids = db.players.slice(0, 6).map((p) => p.id);
+  const g = (await call('POST', '/api/games', { date: '2099-02-02' })).result;
+  for (const id of ids) await call('POST', `/api/games/${g.id}/rsvp`, { playerId: id, status: 'in' });
+  assert.equal((await call('POST', `/api/games/${g.id}/undo-teams`)).status, 400, 'nothing to undo yet');
+  const first = (await call('POST', `/api/games/${g.id}/auto-teams`)).result.teams;
+  let second;
+  for (let i = 0; i < 20; i++) { second = (await call('POST', `/api/games/${g.id}/auto-teams`)).result.teams; if (JSON.stringify(second) !== JSON.stringify(first)) break; }
+  const undone = (await call('POST', `/api/games/${g.id}/undo-teams`)).result.teams;
+  assert.deepEqual(undone, first, 'back to the teams before the last shuffle');
+  const redone = (await call('POST', `/api/games/${g.id}/undo-teams`)).result.teams;
+  assert.deepEqual(redone, second);
+  await call('DELETE', `/api/games/${g.id}`);
+});

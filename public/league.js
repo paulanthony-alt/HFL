@@ -380,7 +380,19 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     const ins = db.players.filter((p) => p.active !== false && (g.rsvps[p.id] === 'in' || placed.has(p.id)));
     if (ins.length < 2) throw bad('need at least 2 players in to make teams');
     const res = balanceTeams(ins.map((p) => ({ id: p.id, elo: league.elo[p.id], position: p.position })));
+    // Keep the teams from before this shuffle so "Undo shuffle" can bring them back.
+    if (g.teams.A.length || g.teams.B.length) g.prevTeams = structuredClone(g.teams);
     g.teams = { A: res.A, B: res.B };
+    return g;
+  });
+  // Undo the last shuffle (tapping it again flips back, like redo).
+  on('POST', '/api/games/:id/undo-teams', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'scheduled') throw bad('teams are locked once the game starts');
+    if (!g.prevTeams) throw bad('nothing to undo');
+    const prev = checkTeams(db, g.prevTeams);
+    g.prevTeams = structuredClone(g.teams);
+    g.teams = prev;
     return g;
   });
   on('PUT', '/api/games/:id/teams', (db, b, { id }) => {
