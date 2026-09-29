@@ -18,6 +18,32 @@ export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 export const bad = (msg) => new HttpError(400, msg);
+const forbidden = (msg) => new HttpError(403, msg);
+
+// ---------------------------------------------------------------------------
+// Who's asking. Every request can carry _auth: { as: playerId, pinHash }, where pinHash is
+// sha256("hfl|<playerId>|<PIN>") worked out on the phone. The commissioner is whoever
+// settings.commissionerId names, else the player called Paul.
+export const commissionerId = (db) =>
+  db.settings?.commissionerId || db.players.find((p) => String(p.name || '').trim().toLowerCase() === 'paul')?.id || null;
+export function whoIsAsking(db, b) {
+  const a = b?._auth;
+  if (!a?.as || !a?.pinHash) return null;
+  const p = db.players.find((x) => x.id === a.as);
+  return p?.pinHash && p.pinHash === a.pinHash ? p.id : null;
+}
+const isCommish = (db, id) => !!id && id === commissionerId(db);
+function requireCommish(db, b, what) {
+  if (!isCommish(db, whoIsAsking(db, b))) throw forbidden(`Only the commissioner can ${what}`);
+}
+function requireSelfOrCommish(db, b, targetId, what) {
+  const who = whoIsAsking(db, b);
+  if (who === targetId || isCommish(db, who)) return;
+  throw forbidden(who ? `Only ${db.players.find((p) => p.id === targetId)?.name || 'that player'} (or the commissioner) can ${what}` : `Enter your PIN to ${what}`);
+}
+// Profile stuff a player controls himself; everything else on a player is commissioner-only.
+const SELF_FIELDS = ['nickname', 'number', 'emoji', 'color', 'cardStyle'];
+const PIN_HASH = /^[0-9a-f]{64}$/;
 export const newId = () => {
   const b = crypto.getRandomValues(new Uint8Array(6));
   return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
@@ -152,6 +178,7 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     Object.assign(db, buildDemo(newId, db.settings.season));
   });
   on('POST', '/api/import', (db, b) => {
+    requireCommish(db, b, 'restore a backup');
     const incoming = b?.db;
     for (const k of ['players', 'games', 'posts', 'plays', 'fame']) {
       if (!Array.isArray(incoming?.[k])) throw bad(`backup is missing "${k}"`);
@@ -201,7 +228,9 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   });
 
   on('POST', '/api/players', (db, b) => {
-    const p = cleanPlayer({ position: 'ATH', startOvr: 70, emoji: '', nickname: '', number: '', ...b });
+    // Anyone can add a player, but only the commissioner sets his starting ratings/position.
+    const rated = isCommish(db, whoIsAsking(db, b)) ? {} : { startOvr: 70, position: 'ATH' };
+    const p = cleanPlayer({ position: 'ATH', startOvr: 70, emoji: '', nickname: '', number: '', ...b, ...rated });
     Object.assign(p, { id: newId(), active: true, createdAt: now(), color: color(b.color, '#ff6b1a') });
     db.players.push(p);
     return p;
@@ -209,6 +238,7 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   // Card photo: { image: dataURL } to set, { image: null } to remove.
   on('POST', '/api/players/:id/photo', (db, b, { id }, fx) => {
     const p = player(db, id);
+    requireSelfOrCommish(db, b, id, 'change this card photo');
     const old = p.photo;
     if (b.image) {
       const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.image);
@@ -227,14 +257,30 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   on('PATCH', '/api/players/:id', (db, b, { id }) => {
     const i = db.players.findIndex((p) => p.id === id);
     if (i < 0) throw new HttpError(404, 'player not found');
+    const fields = Object.keys(b).filter((k) => k !== '_auth');
+    if (fields.some((k) => !SELF_FIELDS.includes(k))) requireCommish(db, b, 'change names, positions, starting ratings or retire players');
+    else requireSelfOrCommish(db, b, id, 'edit this profile');
     db.players[i] = cleanPlayer(b, db.players[i]);
     return db.players[i];
+  });
+
+  // Personal PIN. Unclaimed players: anyone can set it (that's claiming your name).
+  // Claimed: only that player (changing it) or the commissioner (resetting it; null clears it).
+  on('POST', '/api/players/:id/pin', (db, b, { id }) => {
+    const p = player(db, id);
+    const next = b.pinHash ?? null;
+    if (next !== null && !PIN_HASH.test(next)) throw bad('bad PIN');
+    if (p.pinHash) requireSelfOrCommish(db, b, id, 'change this PIN');
+    if (next === null && !p.pinHash) return { ok: true };
+    p.pinHash = next;
+    return { ok: true, claimed: !!next };
   });
 
   // Manual ratings, Madden style: { ratings: { playerId: { attrs: { spd: 88, ... }, position } } }.
   // (A plain number still works and sets all nine ratings to it.) Stored as dated edits so
   // games played afterwards keep moving the ratings from the new numbers.
   on('POST', '/api/ratings', (db, b) => {
+    requireCommish(db, b, 'change ratings');
     const entries = Object.entries(b.ratings || {});
     if (!entries.length) throw bad('no ratings to save');
     const at = now();

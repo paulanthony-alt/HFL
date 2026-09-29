@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION, rsvpOpen } from './league.js';
+import { ROSTER_VERSION, rsvpOpen, commissionerId } from './league.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
@@ -32,7 +32,22 @@ const activePlayers = () => S.db.players.filter((p) => p.active !== false).sort(
 const P = (id) => S.db.players.find((p) => p.id === id) || { id, name: 'Unknown', nickname: '', emoji: '❔', color: '#555555', position: 'ATH' };
 const nick = (id) => { const p = P(id); return p.nickname || p.name.split(' ')[0]; };
 const ovr = (id) => S.league.ovr[id] ?? E.eloToOvr(E.ovrToElo(P(id).startOvr));
-const me = () => (S.me && S.db.players.some((p) => p.id === S.me) ? S.me : null);
+// ---- identity + PINs -----------------------------------------------------
+// A player's PIN is stored (and checked) as sha256("hfl|<id>|<PIN>"). This phone remembers
+// the hash per player once it's been typed, so nobody has to re-enter it.
+const storedPin = (id) => lsGet(`hfl.pin.${id}`);
+const hasPin = (id) => !!S.db.players.find((p) => p.id === id)?.pinHash;
+const pinOk = (id) => { const p = S.db.players.find((x) => x.id === id); return !!p?.pinHash && storedPin(id) === p.pinHash; };
+// "Me" = the player picked on this phone, as long as it's unlocked with his PIN (or he hasn't set one yet).
+const me = () => (S.me && S.db.players.some((p) => p.id === S.me) && (!hasPin(S.me) || pinOk(S.me)) ? S.me : null);
+const commish = () => commissionerId(S.db);
+const iAmCommish = () => !!me() && me() === commish() && pinOk(me());
+const canEditProfile = (id) => iAmCommish() || (me() === id && pinOk(id));
+async function hashPin(id, pin) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`hfl|${id}|${pin}`));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+const authPayload = () => (S.me && storedPin(S.me) ? { as: S.me, pinHash: storedPin(S.me) } : undefined);
 const initials = (name) => name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 // Card photos: uploaded ones (p.photo), else a built-in one shipped with the app.
 const DEFAULT_PHOTOS = { ben: '/photos/ben.jpg', kellen: '/photos/kellen.jpg', henry: '/photos/henry.jpg', liam: '/photos/liam.jpg', paul: '/photos/paul.jpg', dane: '/photos/dane.jpg', lucas: '/photos/lucas.jpg' };
@@ -115,6 +130,8 @@ function toast(msg, isError = false) {
 // Server sync
 
 async function api(method, url, body) {
+  // Every change says who's asking, so the league rules can check PIN-protected edits.
+  if (method !== 'GET' && authPayload()) body = { ...(body || {}), _auth: authPayload() };
   if (S.backend) { // Firebase: run the change right here against Firestore
     const { result, db } = await S.backend.request(method, url, body);
     setDb(db);
@@ -218,6 +235,7 @@ const ROUTES = [
   [/^#\/fame$/, viewFame, 'fame'],
   [/^#\/fame\/new$/, viewFameNew, 'fame'],
   [/^#\/me$/, viewMe, ''],
+  [/^#\/unlock\/([\w-]+)$/, viewUnlock, ''],
   [/^#\/nickname$/, viewNickname, ''],
   [/^#\/ratings$/, viewRatings, ''],
   [/^#\/key$/, viewKey, 'cards'],
@@ -414,6 +432,7 @@ function viewHome() {
 
   const others = [...live.slice(1), ...upcoming.filter((g) => g !== current)];
   const main = `
+    ${me() && !hasPin(me()) ? `<a class="banner" href="#/unlock/${me()}"><span class="banner-dot"></span><span><b>Lock your profile.</b> Create a PIN so nobody else can change your nickname, photo or card.</span><span class="banner-go">›</span></a>` : ''}
     ${me() ? '' : `<a class="banner" href="#/me"><span class="banner-dot"></span><span><b>Who's holding this phone?</b> Pick yourself so your RSVPs, votes and posts count.</span><span class="banner-go">›</span></a>`}
     ${current ? gamePanel(current) : `
       <section class="card">${empty({ art: 'field', title: 'No game on the schedule', text: 'Set one up and the crew can start tapping in.', cta: '<a class="btn hot" href="#/new-game">Schedule a game</a>' })}</section>`}
@@ -992,14 +1011,15 @@ function designSection(id) {
   const p = P(id);
   const unlocked = S.awards.designs[id] || [''];
   const cur = cardDesign(S.awards, p);
+  const mine = canEditProfile(id);
   return `
     <section class="card">
       <div class="row-between"><h3>Card designs</h3><span class="muted small">${unlocked.length} of ${DESIGNS.length} unlocked</span></div>
       <div class="design-grid">${DESIGNS.map((d) => {
         const open = unlocked.includes(d.key);
-        return `<button class="design-opt design-${d.key || 'classic'} ${open ? '' : 'locked'} ${cur === d.key ? 'on' : ''}" ${open ? `data-a="set-design" data-p="${id}" data-d="${d.key}"` : 'disabled'} title="${h(d.how)}">
+        return `<button class="design-opt design-${d.key || 'classic'} ${open ? '' : 'locked'} ${cur === d.key ? 'on' : ''}" ${open && mine ? `data-a="set-design" data-p="${id}" data-d="${d.key}"` : 'disabled'} title="${h(d.how)}">
           <span class="design-swatch tcard ${open ? `tier-${tier(ovr(id))} ${d.key ? `design-${d.key}` : ''}` : ''}"><i></i></span>
-          <b>${open ? '' : '🔒 '}${d.emoji} ${h(d.name)}</b><small>${open ? (cur === d.key ? 'Wearing it' : 'Tap to wear') : h(d.how)}</small>
+          <b>${open ? '' : '🔒 '}${d.emoji} ${h(d.name)}</b><small>${open ? (cur === d.key ? 'Wearing it' : mine ? 'Tap to wear' : 'Unlocked') : h(d.how)}</small>
         </button>`;
       }).join('')}</div>
     </section>`;
@@ -1132,40 +1152,46 @@ function viewCard(id) {
 
     ${careerSection(id)}
     ${fame.length ? `<section class="card"><h3>In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
-    ${id === me() ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>
+    ${id === me() && pinOk(id) ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>
       <a class="btn ghost block" href="#/p/${id}/edit">📸 ${photoOf(p) ? 'Change' : 'Add'} your card photo</a>` : ''}
-    <a class="btn ghost block" href="#/p/${id}/edit">✎ Edit player</a>`;
+    ${canEditProfile(id) ? `<a class="btn ghost block" href="#/p/${id}/edit">✎ Edit ${id === me() ? 'my profile' : 'player'}</a>` : `<p class="muted small center">🔒 Only ${h(p.name)}${commish() ? ` or ${h(P(commish()).name)} (commissioner)` : ''} can edit this profile.</p>`}`;
 }
 
 function viewEditPlayer(id) {
   const p = id ? S.db.players.find((x) => x.id === id) : null;
   if (id && !p) return `<p class="muted">Player not found.</p>`;
   const v = p || { name: '', nickname: '', number: '', position: 'ATH', startOvr: 70, emoji: '', color: '#ff6b1a', active: true };
+  const boss = iAmCommish();
+  if (p && !canEditProfile(p.id)) {
+    return `<a class="back" href="#/p/${p.id}">‹ Back</a>
+      <section class="card">${empty({ art: 'cards', title: 'Locked', text: `Only ${h(p.name)} can edit his own profile${commish() ? `, or ${h(P(commish()).name)} as commissioner` : ''}. ${me() === p.id ? 'Enter your PIN first.' : ''}`, cta: me() === p.id || !me() ? `<a class="btn hot" href="#/unlock/${p.id}">${p.pinHash ? 'Enter PIN' : 'Create PIN'}</a>` : '' })}</section>`;
+  }
+  const lockNote = (what) => `<span class="lock-note">🔒 ${what}</span>`;
   return `
     <a class="back" href="${p ? `#/p/${p.id}` : '#/cards'}">‹ Back</a>
     <section class="card">
       <h2>${p ? 'Edit player' : 'New player'}</h2>
       <form data-f="player" data-id="${p ? p.id : ''}" class="form">
-        <label>Name <input name="name" required maxlength="40" value="${h(v.name)}" placeholder="Marcus Hill"></label>
+        ${!p || boss ? `<label>Name <input name="name" required maxlength="40" value="${h(v.name)}" placeholder="Marcus Hill"></label>` : ''}
         <label>Nickname <input name="nickname" maxlength="40" value="${h(v.nickname)}" placeholder="Slingshot"></label>
         <div class="form-row">
-          <label>Position <select name="position">${E.POSITIONS.map((x) => `<option ${v.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+          ${boss ? `<label>Position <select name="position">${E.POSITIONS.map((x) => `<option ${v.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>` : `<label>Position ${lockNote(`${h(v.position || 'ATH')} · set by the commissioner`)}</label>`}
           <label>Jersey # <input name="number" type="number" min="0" max="99" inputmode="numeric" value="${h(v.number)}"></label>
         </div>
         <div class="form-row">
           <label>Card emoji <input name="emoji" maxlength="8" value="${h(v.emoji)}" placeholder="⚡"></label>
           <label>Card color <input name="color" type="color" value="${h(v.color || '#ff6b1a')}"></label>
         </div>
-        ${p ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
+        ${p || !boss ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>`}
-        <p class="muted small">${p ? 'His eleven Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
-        <div class="photo-field">
+        <p class="muted small">${!boss ? '🔒 Ratings and position are locked: only the app (after every game) and the commissioner can change them.' : p ? 'His eleven Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
+        ${p || boss ? `<div class="photo-field">
           ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
           <label class="grow">Card photo <input type="file" name="photo" accept="image/*"></label>
         </div>
-        <p class="muted small">A shot from the waist up works best. It shows on the card and next to the name everywhere.${p?.photo ? ' <button type="button" class="linkish" data-a="remove-photo" data-p="' + p.id + '">Remove current photo</button>' : ''}</p>
-        ${p ? `<label class="check"><input type="checkbox" name="retired" ${p.active === false ? 'checked' : ''}> Retired (hide from RSVPs and cards, keep his stats)</label>` : ''}
+        <p class="muted small">A shot from the waist up works best. It shows on the card and next to the name everywhere.${p?.photo ? ' <button type="button" class="linkish" data-a="remove-photo" data-p="' + p.id + '">Remove current photo</button>' : ''}</p>` : ''}
+        ${p && boss ? `<label class="check"><input type="checkbox" name="retired" ${p.active === false ? 'checked' : ''}> Retired (hide from RSVPs and cards, keep his stats)</label>` : ''}
         <button class="btn hot block">${p ? 'Save' : '+ Add to the league'}</button>
       </form>
     </section>`;
@@ -1198,6 +1224,28 @@ function viewNickname() {
     </section>`;
 }
 
+function viewUnlock(id) {
+  const p = S.db.players.find((x) => x.id === id);
+  if (!p) return `<p class="muted">Player not found. <a href="#/me">Back</a></p>`;
+  const claimed = !!p.pinHash;
+  const boss = commish() === id;
+  return `
+    <a class="back" href="#/me">‹ Who are you?</a>
+    <section class="card unlock">
+      <div class="unlock-av">${avatar(id, 'lg')}</div>
+      <h2>${claimed ? `Hey ${h(nick(id))}` : `Claim ${h(p.name)}`}</h2>
+      <p class="muted">${claimed
+        ? 'Enter your PIN. This phone will remember it.'
+        : `Create a 4-digit PIN. After this, only you${boss ? '' : ' (and the commissioner)'} can change ${h(p.name)}'s nickname, photo and card.${boss ? ' <b>You\'re the commissioner</b>, so this PIN also unlocks ratings and editing anyone.' : ''}`}</p>
+      <form data-f="unlock" data-id="${id}" data-claimed="${claimed ? 1 : ''}" class="form">
+        <label>${claimed ? 'PIN' : 'New PIN'} <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" required autocomplete="off" class="pin-input" autofocus></label>
+        ${claimed ? '' : '<label>Type it again <input name="pin2" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" required autocomplete="off" class="pin-input"></label>'}
+        <button class="btn hot block">${claimed ? 'Unlock' : 'Create PIN & claim'}</button>
+      </form>
+      <p class="muted small">${claimed ? `Forgot it? Ask ${commish() && commish() !== id ? h(P(commish()).name) : 'the commissioner'} to reset it.` : "Pick something you'll remember. Don't use someone else's name!"}</p>
+    </section>`;
+}
+
 function viewMe() {
   const list = activePlayers();
   const m = me();
@@ -1205,13 +1253,14 @@ function viewMe() {
     ${m ? `
       <section class="card">
         <div class="kicker">Signed in as ${h(P(m).name)}</div>
-        ${nicknameForm(m)}
+        ${pinOk(m) ? `${nicknameForm(m)}<button class="btn ghost block" data-a="lock-phone">Sign out on this phone</button>` : `<p class="muted">Create a PIN to lock your profile, then you can set your nickname and photo.</p><a class="btn hot block" href="#/unlock/${m}">Create my PIN</a>`}
       </section>` : ''}
     <section class="card">
       <h2>${m ? 'Not you?' : 'Who are you?'}</h2>
+      <p class="muted small">🔒 = claimed with a PIN.</p>
       <p class="muted">This phone will RSVP, vote and post as this player.</p>
       <div class="me-grid">${list.map((p) => `
-        <button class="me-opt ${m === p.id ? 'on' : ''}" data-a="set-me" data-p="${p.id}">${avatar(p.id, 'lg')}<span>${h(p.name)}</span>${p.nickname ? `<small>“${h(p.nickname)}”</small>` : ''}</button>`).join('')}
+        <button class="me-opt ${m === p.id ? 'on' : ''}" data-a="set-me" data-p="${p.id}">${avatar(p.id, 'lg')}<span>${p.pinHash ? '🔒 ' : ''}${h(p.name)}${commish() === p.id ? ' <small>(commish)</small>' : ''}</span>${p.nickname ? `<small>“${h(p.nickname)}”</small>` : ''}</button>`).join('')}
       </div>
       <a class="btn ghost block" href="#/new-player">Not on the list? Add yourself</a>
     </section>`;
@@ -1464,12 +1513,14 @@ function viewSettings() {
     </section>
     <section class="card">
       <div class="row-between"><h3>Roster (${players.length})</h3><a class="btn sm" href="#/new-player">+ Player</a></div>
+      <p class="muted small">Commissioner: <b>${commish() ? h(P(commish()).name) : 'nobody yet'}</b>. 🔒 = claimed with a PIN.</p>
       ${players.map((p) => `
-        <a class="row-link" href="#/p/${p.id}/edit">${avatar(p.id, 'xs')} <span class="grow">${h(p.name)} ${p.active === false ? '<span class="muted small">(retired)</span>' : ''}</span><span class="muted">${ovr(p.id)} ›</span></a>`).join('') || '<p class="muted">No players yet.</p>'}
+        <div class="row-link">${avatar(p.id, 'xs')} <a class="grow" href="#/p/${p.id}">${p.pinHash ? '🔒 ' : ''}${h(p.name)} ${p.active === false ? '<span class="muted small">(retired)</span>' : ''}</a>
+          ${iAmCommish() && p.pinHash && p.id !== me() ? `<button class="btn sm ghost" data-a="reset-pin" data-p="${p.id}">Reset PIN</button>` : ''}<span class="muted">${ovr(p.id)}</span></div>`).join('') || '<p class="muted">No players yet.</p>'}
       ${players.length ? '' : `<button class="btn ghost block" data-a="seed-demo">👀 Load demo crew</button>`}
     </section>
     <section class="card">
-      <div class="row-between"><h3>Rate players</h3><a class="btn sm hot" href="#/ratings">Open ›</a></div>
+      <div class="row-between"><h3>Rate players ${iAmCommish() ? '' : '🔒'}</h3><a class="btn sm ${iAmCommish() ? 'hot' : 'ghost'}" href="#/ratings">${iAmCommish() ? 'Open' : 'View'} ›</a></div>
       <p class="muted small">Madden style: set each guy's eleven ratings (speed, acceleration, catching, throw power…) and position. His OVR is worked out from them.</p>
     </section>
     <section class="card">
@@ -1496,7 +1547,7 @@ function viewSettings() {
       <p class="muted small">Download everything (players, games, stats, plays, posts) as one file. Restore it on any HFL, on Firebase or on a computer.</p>
       <div class="btn-row">
         <button class="btn ghost grow" data-a="export">⬇ Download backup</button>
-        <label class="btn ghost grow file-btn">⬆ Restore<input type="file" accept="application/json,.json" data-ch="import" hidden></label>
+        ${iAmCommish() ? '<label class="btn ghost grow file-btn">⬆ Restore<input type="file" accept="application/json,.json" data-ch="import" hidden></label>' : ''}
       </div>
     </section>
     <section class="card">
@@ -1549,6 +1600,12 @@ function viewKey() {
 
 function viewRatings() {
   const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
+  if (!iAmCommish()) {
+    const boss = commish();
+    return `
+      <a class="back" href="#/settings">‹ Settings</a>
+      <section class="card">${empty({ art: 'chart', title: 'Ratings are locked', text: `Only the app (it updates everyone's ratings after every game) and the commissioner${boss ? `, ${h(P(boss).name)},` : ''} can change ratings.${boss && me() === boss ? ' Enter your PIN to unlock.' : ''}`, cta: boss && (me() === boss || S.me === boss) ? `<a class="btn hot" href="#/unlock/${boss}">Enter PIN</a>` : '<a class="btn ghost" href="#/stats">See everyone\'s ratings</a>' })}</section>`;
+  }
   return `
     <a class="back" href="#/settings">‹ Settings</a>
     <section class="card">
@@ -1637,6 +1694,7 @@ async function setPasscode(code) {
 const A = {
   'seed-demo': () => run(() => api('POST', '/api/seed-demo'), 'Demo crew loaded 👀'),
   'set-me': ({ p }) => {
+    if (!pinOk(p)) { location.hash = `#/unlock/${p}`; return; } // PIN first (or create one)
     S.me = p;
     lsSet('hfl.me', p);
     location.hash = P(p).nickname ? '#/' : '#/nickname'; // first time: offer a nickname
@@ -1718,6 +1776,11 @@ const A = {
   },
   'share-recap': ({ g }) => { const game = S.db.games.find((x) => x.id === g); if (game) shareRecap(game); },
   'set-design': ({ p, d }) => run(() => api('PATCH', `/api/players/${p}`, { cardStyle: d }), d ? `${DESIGNS.find((x) => x.key === d).emoji} Card design on` : 'Back to Classic'),
+  'reset-pin': ({ p }) => {
+    if (!confirm(`Reset ${P(p).name}'s PIN? He'll create a new one next time he picks his name.`)) return;
+    run(() => api('POST', `/api/players/${p}/pin`, { pinHash: null }), 'PIN reset');
+  },
+  'lock-phone': () => { lsSet(`hfl.pin.${S.me}`, ''); S.me = ''; lsSet('hfl.me', ''); toast('Signed out on this phone'); location.hash = '#/me'; render(); },
   'forget-pass': () => { S.pass = ''; lsSet('hfl.pass', ''); toast('Passcode forgotten on this phone'); render(); },
 };
 
@@ -1758,6 +1821,23 @@ const CHANGE = {
 };
 
 const FORMS = {
+  unlock: async (d, form) => {
+    const id = form.dataset.id;
+    if (!/^\d{4}$/.test(d.pin)) return toast('PIN is 4 digits', true);
+    const hash = await hashPin(id, d.pin);
+    if (form.dataset.claimed) {
+      if (hash !== P(id).pinHash) { form.reset(); return toast('Wrong PIN', true); }
+    } else {
+      if (d.pin !== d.pin2) return toast("Those PINs don't match", true);
+      const ok = await run(() => api('POST', `/api/players/${id}/pin`, { pinHash: hash }));
+      if (ok === undefined) return;
+    }
+    lsSet(`hfl.pin.${id}`, hash);
+    S.me = id;
+    lsSet('hfl.me', id);
+    toast(form.dataset.claimed ? `Unlocked. What's up, ${nick(id)} 👊` : `🔒 ${P(id).name} is yours. Don't forget your PIN`);
+    location.hash = P(id).nickname ? '#/' : '#/nickname';
+  },
   'my-nickname': async (d, form) => {
     const nickname = d.nickname.trim();
     const saved = await run(() => api('PATCH', `/api/players/${form.dataset.id}`, { nickname }), nickname ? `Nickname saved: “${nickname}” 🏈` : 'Nickname cleared');
@@ -1805,11 +1885,11 @@ const FORMS = {
   }, '🔒 Crew password changed. Tell the crew the new one'),
   player: async (d, form) => {
     const id = form.dataset.id;
-    const body = {
-      name: d.name, nickname: d.nickname, position: d.position, number: d.number,
-      emoji: d.emoji, color: d.color, ...(d.startOvr !== undefined ? { startOvr: Number(d.startOvr) } : {}),
-    };
-    if (id) body.active = !d.retired;
+    const boss = iAmCommish();
+    const body = { nickname: d.nickname, number: d.number, emoji: d.emoji, color: d.color };
+    if (!id || boss) body.name = d.name;
+    if (boss) Object.assign(body, { position: d.position, ...(d.startOvr !== undefined ? { startOvr: Number(d.startOvr) } : {}) });
+    if (id && boss) body.active = !d.retired;
     const saved = await run(() => api(id ? 'PATCH' : 'POST', id ? `/api/players/${id}` : '/api/players', body), id ? 'Saved' : `${d.nickname || d.name} joined the HFL 🏈`);
     if (!saved) return;
     const photo = form.querySelector('input[name=photo]')?.files?.[0];
@@ -1821,7 +1901,7 @@ const FORMS = {
         toast(e.message, true);
       }
     }
-    if (!id && !me()) { S.me = saved.id; lsSet('hfl.me', saved.id); }
+    if (!id && !me()) { location.hash = `#/unlock/${saved.id}`; return; } // new guy: claim it with a PIN
     location.hash = `#/p/${saved.id}`;
   },
   game: async (d) => {

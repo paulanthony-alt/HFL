@@ -3,15 +3,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createHflServer } from '../server.js';
 
-let server, base, dir;
+let server, base, dir, PAUL;
+const pinHash = (id, pin) => crypto.createHash('sha256').update(`hfl|${id}|${pin}`).digest('hex');
+const asPaul = (body = {}) => ({ ...body, _auth: PAUL });
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-test-'));
   server = await createHflServer({ dataDir: dir, passcode: '' });
   await new Promise((r) => server.listen(0, r));
   base = `http://localhost:${server.address().port}`;
+  // The commissioner (a player named Paul) with PIN 6767.
+  const paul = (await call('POST', '/api/players', { name: 'Paul' })).result;
+  PAUL = { as: paul.id, pinHash: pinHash(paul.id, '6767') };
+  await call('POST', `/api/players/${paul.id}/pin`, { pinHash: PAUL.pinHash });
 });
 after(() => {
   server.closeAllConnections();
@@ -27,7 +34,7 @@ async function call(method, url, body) {
 test('full game day: players → RSVP → teams → live stats → final → MVP', async () => {
   const ids = [];
   for (let i = 0; i < 10; i++) {
-    const r = await call('POST', '/api/players', { name: `Player ${i}`, nickname: `P${i}`, position: i < 2 ? 'QB' : 'WR', startOvr: 60 + i * 3 });
+    const r = await call('POST', '/api/players', asPaul({ name: `Player ${i}`, nickname: `P${i}`, position: i < 2 ? 'QB' : 'WR', startOvr: 60 + i * 3 }));
     assert.equal(r.status, 200);
     ids.push(r.result.id);
   }
@@ -164,19 +171,20 @@ test('demo seed loads only into an empty league', async () => {
 test('rate players endpoint stores dated edits and moves the rating', async () => {
   const { db } = await call('GET', '/api/state');
   const p = db.players[0];
-  const r = await call('POST', '/api/ratings', { ratings: { [p.id]: 93 } });
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: 93 } })).status, 403, 'nobody but the commissioner');
+  const r = await call('POST', '/api/ratings', asPaul({ ratings: { [p.id]: 93 } }));
   assert.equal(r.status, 200);
   assert.equal(r.db.players[0].ratingEdits.at(-1).ovr, 93);
-  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: 150 } })).status, 400);
+  assert.equal((await call('POST', '/api/ratings', asPaul({ ratings: { [p.id]: 150 } }))).status, 400);
 
   // Madden-style: individual ratings + position
-  const m = await call('POST', '/api/ratings', { ratings: { [p.id]: { attrs: { spd: 95, cth: 91 }, position: 'WR' } } });
+  const m = await call('POST', '/api/ratings', asPaul({ ratings: { [p.id]: { attrs: { spd: 95, cth: 91 }, position: 'WR' } } }));
   assert.equal(m.status, 200);
   const edited = m.db.players.find((x) => x.id === p.id);
   assert.deepEqual(edited.ratingEdits.at(-1).attrs, { spd: 95, cth: 91 });
   assert.equal(edited.position, 'WR');
-  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: { attrs: { swag: 99 } } } })).status, 400, 'unknown rating');
-  assert.equal((await call('POST', '/api/ratings', { ratings: { [p.id]: { attrs: { spd: 5 } } } })).status, 400, 'below 20');
+  assert.equal((await call('POST', '/api/ratings', asPaul({ ratings: { [p.id]: { attrs: { swag: 99 } } } }))).status, 400, 'unknown rating');
+  assert.equal((await call('POST', '/api/ratings', asPaul({ ratings: { [p.id]: { attrs: { spd: 5 } } } }))).status, 400, 'below 20');
 });
 
 test('passcode set in the app locks everything, survives restart, and can be removed', async () => {
@@ -247,17 +255,17 @@ test('player card photos: set, replace, remove', async () => {
   const { db } = await call('GET', '/api/state');
   const p = db.players[0];
   const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-  const first = await call('POST', `/api/players/${p.id}/photo`, { image: png });
+  const first = await call('POST', `/api/players/${p.id}/photo`, asPaul({ image: png }));
   assert.equal(first.status, 200);
   assert.match(first.result.photo, /^\/uploads\/player-/);
   assert.equal((await fetch(base + first.result.photo)).status, 200);
-  const second = await call('POST', `/api/players/${p.id}/photo`, { image: png });
+  const second = await call('POST', `/api/players/${p.id}/photo`, asPaul({ image: png }));
   assert.notEqual(second.result.photo, first.result.photo);
   assert.equal((await fetch(base + first.result.photo)).status, 404, 'old photo cleaned up');
-  const gone = await call('POST', `/api/players/${p.id}/photo`, { image: null });
+  const gone = await call('POST', `/api/players/${p.id}/photo`, asPaul({ image: null }));
   assert.equal(gone.result.photo, null);
   assert.equal((await fetch(base + second.result.photo)).status, 404);
-  assert.equal((await call('POST', `/api/players/${p.id}/photo`, { image: 'data:text/html;base64,PHNjcmlwdD4=' })).status, 400);
+  assert.equal((await call('POST', `/api/players/${p.id}/photo`, asPaul({ image: 'data:text/html;base64,PHNjcmlwdD4=' }))).status, 400);
 });
 
 test('RSVPs close when game day starts, but walk-ons can still join a team', async () => {
@@ -287,4 +295,36 @@ test('anyone can log plays, including after the final whistle', async () => {
   const r = await call('POST', `/api/games/${g.id}/events`, { type: 'catch', p1: qa, p2: wa, by: g.teams.B[0] });
   assert.equal(r.status, 200);
   assert.equal(r.result.by, g.teams.B[0]);
+});
+
+test('PIN lock: players edit only their own profile; ratings and positions are commissioner-only', async () => {
+  const kellen = (await call('POST', '/api/players', { name: 'Kellen', startOvr: 99, position: 'QB' })).result;
+  assert.equal(kellen.startOvr, 70, 'only the commissioner sets starting ratings');
+  assert.equal(kellen.position, 'ATH');
+  const max = (await call('POST', '/api/players', { name: 'Max' })).result;
+  const K = { as: kellen.id, pinHash: pinHash(kellen.id, '1111') };
+  const M = { as: max.id, pinHash: pinHash(max.id, '2222') };
+
+  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'K' })).status, 403, 'no PIN, no edits');
+  assert.equal((await call('POST', `/api/players/${kellen.id}/pin`, { pinHash: K.pinHash })).status, 200, 'claiming your name');
+  await call('POST', `/api/players/${max.id}/pin`, { pinHash: M.pinHash });
+  assert.equal((await call('POST', `/api/players/${kellen.id}/pin`, { pinHash: M.pinHash, _auth: M })).status, 403, "can't steal a claimed name");
+
+  const own = await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'K-Train', number: 23, _auth: K });
+  assert.equal(own.status, 200);
+  assert.equal(own.result.nickname, 'K-Train');
+  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'Loser', _auth: M })).status, 403, "Max can't rename Kellen");
+  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'x', _auth: { as: kellen.id, pinHash: pinHash(kellen.id, '9999') } })).status, 403, 'wrong PIN');
+  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { position: 'QB', _auth: K })).status, 403, 'position is a ratings thing');
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [kellen.id]: 99 }, _auth: K })).status, 403, "can't rate yourself");
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  assert.equal((await call('POST', `/api/players/${kellen.id}/photo`, { image: png, _auth: M })).status, 403);
+  assert.equal((await call('POST', `/api/players/${kellen.id}/photo`, { image: png, _auth: K })).status, 200);
+
+  // commissioner can do all of it, and reset a forgotten PIN
+  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, asPaul({ position: 'QB', nickname: 'Slinger' }))).status, 200);
+  assert.equal((await call('POST', `/api/players/${kellen.id}/pin`, asPaul({ pinHash: null }))).status, 200);
+  const after = (await call('GET', '/api/state')).db.players.find((p) => p.id === kellen.id);
+  assert.equal(after.pinHash, null, 'PIN reset, Kellen can claim again');
+  assert.equal((await call('POST', '/api/import', { db: { players: [], games: [], posts: [], plays: [], fame: [] } })).status, 403, 'restoring a backup is commissioner-only');
 });
