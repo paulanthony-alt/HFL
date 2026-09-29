@@ -204,6 +204,24 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     db.players.push(p);
     return p;
   });
+  // Card photo: { image: dataURL } to set, { image: null } to remove.
+  on('POST', '/api/players/:id/photo', (db, b, { id }, fx) => {
+    const p = player(db, id);
+    const old = p.photo;
+    if (b.image) {
+      const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.image);
+      if (!m) throw bad('photo must be a JPEG, PNG or WebP');
+      if (Math.floor((m[2].length * 3) / 4) > MAX_IMAGE_BYTES) throw bad(`photo is too big (${MAX_IMAGE_BYTES / 1024}KB max)`);
+      const file = `player-${p.id}-${newId()}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
+      fx.images.push({ op: 'put', file, base64: m[2], mime: `image/${m[1]}` });
+      p.photo = imageUrl(file);
+    } else {
+      p.photo = null;
+    }
+    if (old) fx.images.push({ op: 'delete', file: old.split(/[/:]/).pop() });
+    return p;
+  });
+
   on('PATCH', '/api/players/:id', (db, b, { id }) => {
     const i = db.players.findIndex((p) => p.id === id);
     if (i < 0) throw new HttpError(404, 'player not found');

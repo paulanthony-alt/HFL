@@ -242,3 +242,20 @@ test('roster setup: keeps the crew, clears everyone else, runs only once', async
     fs.rmSync(d, { recursive: true, force: true });
   }
 });
+
+test('player card photos: set, replace, remove', async () => {
+  const { db } = await call('GET', '/api/state');
+  const p = db.players[0];
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const first = await call('POST', `/api/players/${p.id}/photo`, { image: png });
+  assert.equal(first.status, 200);
+  assert.match(first.result.photo, /^\/uploads\/player-/);
+  assert.equal((await fetch(base + first.result.photo)).status, 200);
+  const second = await call('POST', `/api/players/${p.id}/photo`, { image: png });
+  assert.notEqual(second.result.photo, first.result.photo);
+  assert.equal((await fetch(base + first.result.photo)).status, 404, 'old photo cleaned up');
+  const gone = await call('POST', `/api/players/${p.id}/photo`, { image: null });
+  assert.equal(gone.result.photo, null);
+  assert.equal((await fetch(base + second.result.photo)).status, 404);
+  assert.equal((await call('POST', `/api/players/${p.id}/photo`, { image: 'data:text/html;base64,PHNjcmlwdD4=' })).status, 400);
+});

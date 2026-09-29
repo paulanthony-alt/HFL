@@ -803,6 +803,22 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
 .pos-ovr.best { box-shadow: inset 0 0 0 1.5px var(--gold); }
 .career td { padding: 7px 4px; }
 
+/* player photos */
+.av.has-photo { color: transparent; background-color: var(--c); background-size: cover; background-position: center 12%; }
+.tc-art.has-photo {
+  background-color: color-mix(in srgb, var(--c) 30%, #000);
+  background-size: cover; background-position: center 14%; background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.tc-art.has-photo::after { /* fade the photo into the card */
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, transparent 55%, color-mix(in srgb, var(--edge-2, #000) 35%, rgba(0, 0, 0, 0.75)) 100%);
+}
+.tcard.big .tc-art.has-photo { min-height: 120px; }
+.tcard.mini .tc-art.has-photo { min-height: 96px; }
+.tc-top, .tc-name, .tc-nick, .tc-stats, .tc-foot { flex-shrink: 0; } /* never squeeze the text; the art takes what's left */
+.photo-field { display: flex; align-items: flex-end; gap: 14px; }
+
 /* full rating names on cards */
 .tc-stats em { display: block; margin-top: 3px; font: 600 9px/1.1 var(--body); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
 .tcard.mini .tc-stats em { font-size: 7.5px; }

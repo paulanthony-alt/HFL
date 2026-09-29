@@ -32,7 +32,22 @@ const nick = (id) => { const p = P(id); return p.nickname || p.name.split(' ')[0
 const ovr = (id) => S.league.ovr[id] ?? E.eloToOvr(E.ovrToElo(P(id).startOvr));
 const me = () => (S.me && S.db.players.some((p) => p.id === S.me) ? S.me : null);
 const initials = (name) => name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-const avatar = (id, cls = '') => { const p = P(id); return `<span class="av ${cls}" style="--c:${h(p.color || '#ff6b1a')}">${h(p.emoji || initials(p.name))}</span>`; };
+// Card photos: uploaded ones (p.photo), else a built-in one shipped with the app.
+const DEFAULT_PHOTOS = { ben: '/photos/ben.jpg' };
+const photoOf = (p) => p?.photo || DEFAULT_PHOTOS[String(p?.name || '').trim().toLowerCase()] || null;
+// Style + attributes that paint a photo as an element's background. Photos kept in
+// Firestore ("fsimg:") are filled in after render by hydrateImages().
+function photoBg(url) {
+  if (!url) return { style: '', attr: '' };
+  if (url.startsWith('fsimg:')) return { style: '', attr: ` data-fsbg="${h(url.slice(6))}"` };
+  return { style: `;background-image:url('${h(url)}')`, attr: '' };
+}
+const avatar = (id, cls = '') => {
+  const p = P(id);
+  const ph = photoOf(p);
+  const bg = photoBg(ph);
+  return `<span class="av ${cls} ${ph ? 'has-photo' : ''}" style="--c:${h(p.color || '#ff6b1a')}${bg.style}"${bg.attr}>${h(p.emoji || initials(p.name))}</span>`;
+};
 const tier = (o) => (o >= 90 ? 'legend' : o >= 80 ? 'gold' : o >= 70 ? 'silver' : 'bronze');
 const attrsOf = (id) => S.league.attrs[id] || E.baseAttrs(P(id));
 // Madden-style rating colors: 90+ elite, 80s great, 70s good, 60s meh, below that rough.
@@ -244,6 +259,9 @@ function hydrateImages() {
   document.querySelectorAll('img[data-fsimg]').forEach((img) => {
     S.backend.getImage(img.dataset.fsimg).then((src) => { if (src) img.src = src; }).catch(() => {});
   });
+  document.querySelectorAll('[data-fsbg]').forEach((el) => {
+    S.backend.getImage(el.dataset.fsbg).then((src) => { if (src) el.style.backgroundImage = `url("${src}")`; }).catch(() => {});
+  });
 }
 
 // One-time: make the league the HFL crew (see HFL_ROSTER in league.js).
@@ -261,6 +279,7 @@ function renderChrome(tab) {
   document.title = S.db.settings.crewName === 'HFL' ? 'HFL' : `HFL · ${S.db.settings.crewName}`;
   const m = me();
   $('#me-pill').innerHTML = m ? `${avatar(m, 'xs')} ${h(nick(m))}` : 'Who are you?';
+  if (m) hydrateImages();
   document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
 }
 
@@ -796,7 +815,13 @@ function tradingCard(id, { mini = false } = {}) {
         <div class="tc-ovr">${o}<small>OVR</small></div>
         <div class="tc-pos">${h(p.position || 'ATH')}${p.number !== '' && p.number !== undefined ? `<small>#${h(p.number)}</small>` : ''}</div>
       </div>
-      <div class="tc-art" style="--c:${h(p.color || '#ff6b1a')}">${p.number !== '' && p.number !== undefined ? `<i class="tc-num">${h(p.number)}</i>` : ''}<span>${h(p.emoji || initials(p.name))}</span></div>
+      ${(() => {
+        const ph = photoOf(p);
+        const bg = photoBg(ph);
+        return ph
+          ? `<div class="tc-art has-photo" style="--c:${h(p.color || '#ff6b1a')}${bg.style}"${bg.attr}></div>`
+          : `<div class="tc-art" style="--c:${h(p.color || '#ff6b1a')}">${p.number !== '' && p.number !== undefined ? `<i class="tc-num">${h(p.number)}</i>` : ''}<span>${h(p.emoji || initials(p.name))}</span></div>`;
+      })()}
       <div class="tc-name">${h(p.name)}</div>
       ${p.nickname ? `<div class="tc-nick">“${h(p.nickname)}”</div>` : '<div class="tc-nick">&nbsp;</div>'}
       <div class="tc-stats">
@@ -897,7 +922,8 @@ function viewCard(id) {
 
     ${careerSection(id)}
     ${fame.length ? `<section class="card"><h3>In the Hall</h3>${fame.map((f) => `<div class="mini-fame">${FAME[f.category].emoji} <b>${h(f.title)}</b></div>`).join('')}</section>` : ''}
-    ${id === me() ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>` : ''}
+    ${id === me() ? `<a class="btn hot block" href="#/me">${p.nickname ? 'Change your nickname' : 'Add your nickname'}</a>
+      <a class="btn ghost block" href="#/p/${id}/edit">📸 ${photoOf(p) ? 'Change' : 'Add'} your card photo</a>` : ''}
     <a class="btn ghost block" href="#/p/${id}/edit">✎ Edit player</a>`;
 }
 
@@ -924,6 +950,11 @@ function viewEditPlayer(id) {
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>`}
         <p class="muted small">${p ? 'His nine Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all nine of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
+        <div class="photo-field">
+          ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
+          <label class="grow">Card photo <input type="file" name="photo" accept="image/*"></label>
+        </div>
+        <p class="muted small">A shot from the waist up works best. It shows on the card and next to the name everywhere.${p?.photo ? ' <button type="button" class="linkish" data-a="remove-photo" data-p="' + p.id + '">Remove current photo</button>' : ''}</p>
         ${p ? `<label class="check"><input type="checkbox" name="retired" ${p.active === false ? 'checked' : ''}> Retired (hide from RSVPs and cards, keep his stats)</label>` : ''}
         <button class="btn hot block">${p ? 'Save' : '+ Add to the league'}</button>
       </form>
@@ -1465,6 +1496,10 @@ const A = {
     if (!confirm('Sign this phone out? You\'ll need the crew password to get back in.')) return;
     S.backend.auth.signOut();
   },
+  'remove-photo': ({ p }) => {
+    if (!confirm('Remove this card photo?')) return;
+    run(() => api('POST', `/api/players/${p}/photo`, { image: null }), 'Photo removed');
+  },
   'forget-pass': () => { S.pass = ''; lsSet('hfl.pass', ''); toast('Passcode forgotten on this phone'); render(); },
 };
 
@@ -1555,6 +1590,15 @@ const FORMS = {
     if (id) body.active = !d.retired;
     const saved = await run(() => api(id ? 'PATCH' : 'POST', id ? `/api/players/${id}` : '/api/players', body), id ? 'Saved' : `${d.nickname || d.name} joined the HFL 🏈`);
     if (!saved) return;
+    const photo = form.querySelector('input[name=photo]')?.files?.[0];
+    if (photo && photo.size) {
+      try {
+        const image = await resizeImage(photo, 900);
+        await run(() => api('POST', `/api/players/${saved.id}/photo`, { image }), '📸 Card photo saved');
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
     if (!id && !me()) { S.me = saved.id; lsSet('hfl.me', saved.id); }
     location.hash = `#/p/${saved.id}`;
   },
