@@ -803,6 +803,37 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
 .pos-ovr.best { box-shadow: inset 0 0 0 1.5px var(--gold); }
 .career td { padding: 7px 4px; }
 
+/* full rating names on cards */
+.tc-stats em { display: block; margin-top: 3px; font: 600 9px/1.1 var(--body); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.tcard.mini .tc-stats em { font-size: 7.5px; }
+.tc-attrs .ab:has(.ab-l) { grid-template-columns: 30px 84px 1fr 24px; min-height: 0; border-bottom: 0; gap: 6px; }
+.tc-attrs .ab-l { font-size: 11px; font-weight: 600; color: var(--muted); }
+.btn-row.tight { margin-top: 0; gap: 8px; flex-wrap: nowrap; }
+
+/* ratings key */
+.key-list { display: grid; margin: 4px 0 10px; }
+.key-row { display: grid; grid-template-columns: 52px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.key-row:last-child { border-bottom: 0; }
+.key-abbr { align-self: start; display: grid; place-items: center; height: 34px; border-radius: 8px; background: var(--surface-3); border: 1px solid var(--line-2); font: 800 14px/1 var(--label); letter-spacing: 0.1em; color: var(--gold); transform: skewX(-8deg); }
+.key-row b { font: 800 19px/1 var(--display); text-transform: uppercase; letter-spacing: 0.02em; }
+.key-row p { margin: 4px 0 0; font-size: 14.5px; color: var(--text-2); }
+.key-row p.key-moves { color: var(--muted); font-size: 13.5px; }
+.key-row p.key-moves::before { content: '↕ '; color: var(--blaze); }
+.key-grades { display: grid; gap: 8px; }
+.key-grade { display: grid; grid-template-columns: 70px 1fr 90px; align-items: center; gap: 12px; }
+.key-grade b { font: 900 20px/1 var(--display); }
+.key-grade span { font-weight: 700; }
+.key-grade i { height: 7px; border-radius: 4px; background: var(--g); box-shadow: 0 0 10px -2px var(--g); }
+.key-tiers { display: flex; flex-wrap: wrap; gap: 8px; }
+.key-tier { padding: 7px 12px; border-radius: 10px; border: 2px solid var(--edge); background: var(--face); font: 700 13px/1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--edge); }
+.key-pos { display: grid; gap: 2px; }
+.key-pos-row { display: grid; grid-template-columns: 52px 1fr; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.key-pos-row:last-child { border-bottom: 0; }
+.key-pos-row b { font: 900 18px/1 var(--display); }
+.key-pos-row span { display: flex; flex-wrap: wrap; gap: 6px; }
+.key-pos-row em { font: 700 12.5px/1 var(--label); font-style: normal; letter-spacing: 0.06em; padding: 4px 7px; border-radius: 6px; background: var(--bg-1); border: 1px solid var(--line); color: var(--text-2); }
+.key-pos-row em:first-child { border-color: rgba(255, 90, 31, 0.5); color: var(--text); }
+
 /* rate players editor */
 details.rate-row > summary { list-style: none; cursor: pointer; }
 details.rate-row > summary::-webkit-details-marker { display: none; }

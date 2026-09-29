@@ -38,6 +38,19 @@ const attrsOf = (id) => S.league.attrs[id] || E.baseAttrs(P(id));
 // Madden-style rating colors: 90+ elite, 80s great, 70s good, 60s meh, below that rough.
 const grade = (v) => (v >= 90 ? 'elite' : v >= 80 ? 'great' : v >= 70 ? 'good' : v >= 60 ? 'meh' : 'rough');
 const attrMeta = Object.fromEntries(E.ATTRS.map((a) => [a.key, a]));
+const ATTR_INFO = {
+  spd: ['How fast he gets from A to B: running routes, chasing the ball, closing on a QB.', 'Up with rushing TDs, pick sixes and sacks.'],
+  cth: ['Hands. When the ball gets to him, does it stick?', 'Up with every catch, down with every drop.'],
+  rte: ['Getting open: sharp cuts, timing, shaking the guy covering him.', 'Up with catches and receiving TDs.'],
+  thp: ['Arm strength: how far and how hard he can throw it.', 'Up with TD passes.'],
+  tha: ['Putting the ball exactly where only his guy can get it.', "Up with completions, down with incompletions and picks. Receivers' drops don't count against him."],
+  str: ['Winning the physical stuff: fighting for position, breaking through, not getting pushed around.', 'Up with rushing TDs and sacks.'],
+  mcv: ['Sticking to a receiver one-on-one and taking the ball away.', 'Up with interceptions.'],
+  tak: ['Finishing the play: getting the tag or the flag when it counts.', 'Up with sacks.'],
+  sta: ['Still fast and sharp in the last game of the day.', 'Up a little every game he plays.'],
+};
+const GRADES = [['elite', '90–99', 'Elite'], ['great', '80–89', 'Great'], ['good', '70–79', 'Good'], ['meh', '60–69', 'Average'], ['rough', '20–59', 'Needs work']];
+const keyLink = (label = 'Ratings key') => `<a class="sec-link" href="#/key">${label} ›</a>`;
 function attrBar(key, value, delta = null, { label = false } = {}) {
   const d = delta === null || Math.abs(delta) < 0.05 ? '' : `<span class="ab-d ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '+' : '−'}${Math.abs(delta).toFixed(1)}</span>`;
   return `<div class="ab" title="${h(attrMeta[key].label)}">
@@ -187,6 +200,7 @@ const ROUTES = [
   [/^#\/me$/, viewMe, ''],
   [/^#\/nickname$/, viewNickname, ''],
   [/^#\/ratings$/, viewRatings, ''],
+  [/^#\/key$/, viewKey, 'cards'],
   [/^#\/settings$/, viewSettings, ''],
 ];
 
@@ -715,7 +729,7 @@ function viewStats() {
       }],
       ...E.ATTRS.map((at) => [at.short, (s, id) => `<span class="g-${grade(attrsOf(id)[at.key])}">${attrsOf(id)[at.key]}</span>`]),
     ];
-    note = 'Madden-style ratings. OVR comes from the nine ratings, weighted by position. <a href="#/ratings">Rate players ›</a>';
+    note = 'OVR comes from the nine ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
   }
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
@@ -786,7 +800,7 @@ function tradingCard(id, { mini = false } = {}) {
       <div class="tc-name">${h(p.name)}</div>
       ${p.nickname ? `<div class="tc-nick">“${h(p.nickname)}”</div>` : '<div class="tc-nick">&nbsp;</div>'}
       <div class="tc-stats">
-        ${E.keyAttrs(p.position).map((k) => `<div><b class="g-${grade(a[k])}">${a[k]}</b><small>${attrMeta[k].short}</small></div>`).join('')}
+        ${E.keyAttrs(p.position).map((k) => `<div><b class="g-${grade(a[k])}">${a[k]}</b><small>${attrMeta[k].short}</small><em>${h(attrMeta[k].label)}</em></div>`).join('')}
       </div>
       <div class="tc-foot">HFL · ${h(S.db.settings.season)}</div>
     </div>`;
@@ -794,7 +808,7 @@ function tradingCard(id, { mini = false } = {}) {
   const back = `
     <div class="tc-face tc-back">
       <div class="tc-back-title">${h(p.nickname || p.name)} · Ratings</div>
-      <div class="tc-attrs">${E.ATTRS.map((at) => attrBar(at.key, a[at.key])).join('')}</div>
+      <div class="tc-attrs">${E.ATTRS.map((at) => attrBar(at.key, a[at.key], null, { label: true })).join('')}</div>
       <div class="tc-season">
         <div><b>${s.gp}</b><small>GP</small></div>
         <div><b>${s.w}-${s.l}</b><small>W-L</small></div>
@@ -809,7 +823,7 @@ function tradingCard(id, { mini = false } = {}) {
 function viewCards() {
   const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
   return `
-    ${pageHead(`${list.length} on the roster`, 'Player cards', '<a class="btn sm" href="#/new-player">+ Player</a>')}
+    ${pageHead(`${list.length} on the roster`, 'Player cards', '<div class="btn-row tight"><a class="btn sm ghost" href="#/key">Ratings key</a><a class="btn sm" href="#/new-player">+ Player</a></div>')}
     ${list.length ? `<div class="card-grid">${list.map((p) => tradingCard(p.id, { mini: true })).join('')}</div>` : `<section class="card">${empty({ art: 'cards', title: 'No cards printed yet', text: 'Add your crew and everyone gets a card that levels up with every game.', cta: '<a class="btn hot" href="#/new-player">Add a player</a>' })}</section>`}`;
 }
 
@@ -823,7 +837,8 @@ function ratingsSection(id, log) {
   const order = [...E.keyAttrs(p.position, 9), ...E.ATTR_KEYS.filter((k) => !E.keyAttrs(p.position, 9).includes(k))];
   return `
     <section class="card">
-      <div class="row-between"><h3>Ratings</h3>${last ? `<span class="muted small">changes from ${h(fmtDate(last.g.date, { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
+      <div class="row-between"><h3>Ratings</h3>${keyLink('What these mean')}</div>
+      ${last ? `<p class="muted small">+/− = change from his last game (${h(fmtDate(last.g.date, { month: 'short', day: 'numeric' }))})</p>` : ''}
       <div class="attr-list">${order.map((k) => attrBar(k, a[k], last ? changes[k] : null, { label: true })).join('')}</div>
       <div class="chips-label">OVR at every position</div>
       <div class="pos-ovrs">${Object.entries(byPos).map(([pos, o]) => `
@@ -1248,13 +1263,50 @@ function viewSettings() {
 // ---------------------------------------------------------------------------
 // Rate players
 
+function viewKey() {
+  const pct = (w) => `${Math.round(w * 100)}%`;
+  return `
+    <a class="back" href="#/cards">‹ Cards</a>
+    ${pageHead('Madden style', 'Ratings key')}
+    <section class="card">
+      <h3>The nine ratings</h3>
+      <p class="muted small">Every player is rated 20–99 in each one.</p>
+      <div class="key-list">${E.ATTRS.map((a) => `
+        <div class="key-row">
+          <span class="key-abbr">${a.short}</span>
+          <div><b>${h(a.label)}</b><p>${h(ATTR_INFO[a.key][0])}</p><p class="key-moves">${h(ATTR_INFO[a.key][1])}</p></div>
+        </div>`).join('')}
+      </div>
+      <p class="muted small">Every rating also moves a little with the result: win a game you were expected to lose and they all tick up; get upset and they tick down. Gains get harder the closer you are to 99.</p>
+    </section>
+    <section class="card">
+      <h3>What the colors mean</h3>
+      <div class="key-grades">${GRADES.map(([g, range, name]) => `
+        <div class="key-grade"><b class="g-${g}">${range}</b><span>${name}</span><i class="g-${g}"></i></div>`).join('')}
+      </div>
+      <div class="chips-label">Card colors (by OVR)</div>
+      <div class="key-tiers">
+        <span class="key-tier tier-legend">90+ Legend</span><span class="key-tier tier-gold">80–89 Gold</span>
+        <span class="key-tier tier-silver">70–79 Silver</span><span class="key-tier tier-bronze">Under 70 Bronze</span>
+      </div>
+    </section>
+    <section class="card">
+      <h3>How OVR works</h3>
+      <p class="muted small">Like Madden, OVR is a mix of the nine ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
+      <div class="key-pos">${E.POSITIONS.map((pos) => `
+        <div class="key-pos-row"><b>${pos}</b><span>${Object.entries(E.POSITION_WEIGHTS[pos]).sort((x, y) => y[1] - x[1])
+          .map(([k, w]) => `<em title="${h(attrMeta[k].label)}">${attrMeta[k].short} ${pct(w)}</em>`).join('')}</span></div>`).join('')}
+      </div>
+    </section>`;
+}
+
 function viewRatings() {
   const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
   return `
     <a class="back" href="#/settings">‹ Settings</a>
     <section class="card">
       <h2>Rate players</h2>
-      <p class="muted">Madden style. Every guy has nine ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays.</p>
+      <p class="muted">Madden style. Every guy has nine ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
       <form data-f="ratings" class="form rate-list">
         ${list.map(rateRow).join('')}
         <button class="btn hot block">Save ratings</button>
