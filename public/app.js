@@ -3,6 +3,8 @@ import { ROSTER_VERSION, rsvpOpen, commissionerIds, localToday } from './league.
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
+import { parsePlay, VOICE_EXAMPLES } from './voice.js';
+import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wrapped.js';
 import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
 
 // ---------------------------------------------------------------------------
@@ -248,6 +250,8 @@ const ROUTES = [
   [/^#\/ratings$/, viewRatings, ''],
   [/^#\/key$/, viewKey, 'cards'],
   [/^#\/awards$/, viewAwards, 'stats'],
+  [/^#\/wrapped$/, viewWrappedPicker, 'stats'],
+  [/^#\/wrapped\/([\w-]+)$/, viewWrapped, ''],
   [/^#\/settings$/, viewSettings, ''],
 ];
 
@@ -270,6 +274,8 @@ function render() {
   $('#view').dataset.tab = match.tab || 'other';
   $('#view').innerHTML = match.fn(...match.args, new URLSearchParams(qs || ''));
   S.after?.();
+  // left the game (or it ended): stop listening
+  if (V.on && !document.querySelector('.voice-live')) voiceStop();
   hydrateImages();
   renderChrome(match.tab);
   if (S.lastPath !== path) {
@@ -452,6 +458,13 @@ function viewHome() {
   const main = `
     ${me() && !hasPin(me()) ? `<a class="banner" href="#/unlock/${me()}"><span class="banner-dot"></span><span><b>Lock your profile.</b> Create a PIN so nobody else can change your nickname, photo or card.</span><span class="banner-go">›</span></a>` : ''}
     ${me() ? '' : `<a class="banner" href="#/me"><span class="banner-dot"></span><span><b>Who's holding this phone?</b> Pick yourself so your RSVPs, votes and posts count.</span><span class="banner-go">›</span></a>`}
+    ${(() => {
+      const ws = wrappedBannerSeason();
+      const cur = S.db.games.filter((g) => g.status === 'final' && g.season === S.db.settings.season).length;
+      if (!ws || cur >= 4) return '';
+      const mine = me() && buildWrapped(S.db, S.league, S.awards, me(), ws, { name: nick });
+      return `<a class="banner wr-banner" href="${mine ? `#/wrapped/${me()}?s=${encodeURIComponent(ws)}` : `#/wrapped?s=${encodeURIComponent(ws)}`}"><span class="banner-dot"></span><span><b>🎁 Your Season ${h(ws)} Wrapped is here.</b> Your numbers, your nemesis, your best play.</span><span class="banner-go">›</span></a>`;
+    })()}
     ${current ? gamePanel(current) : `
       <section class="card">${empty({ art: 'field', title: 'No game on the schedule', text: 'Set one up and the crew can start tapping in.', cta: '<a class="btn hot" href="#/new-game">Schedule a game</a>' })}</section>`}
     ${others.length ? sec('Also on the schedule') + others.map((g) => `
@@ -719,10 +732,112 @@ function liveSection(g) {
     <button class="btn block danger-outline" data-a="final" data-g="${g.id}">Final whistle</button>`;
 }
 
+// ---------------------------------------------------------------------------
+// Voice logging: tap the mic once, then just say plays ("Kellen to Max, touchdown").
+// It keeps listening until you tap stop, so the logger never has to look at the phone.
+
+const SpeechRec = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+const V = { rec: null, on: false, gameId: null, heard: '', status: '', last: null, error: '' };
+
+function voiceRoster(g) {
+  return ['A', 'B'].flatMap((side) => g.teams[side].map((id) => {
+    const p = P(id);
+    return { id, team: side, names: [p.name, p.name.split(' ')[0], p.nickname].filter(Boolean) };
+  }));
+}
+
+function voiceBar(g) {
+  if (!SpeechRec) return '';
+  const live = V.on && V.gameId === g.id;
+  if (!live) {
+    return `<button class="btn block voice-btn" data-a="voice-start" data-g="${g.id}">🎤 Log by voice <small>hands-free</small></button>`;
+  }
+  const last = V.last;
+  return `
+    <div class="voice-live" role="status" aria-live="polite">
+      <div class="row-between">
+        <span class="voice-dot"></span><b class="grow">Listening…</b>
+        <button class="btn sm ghost" data-a="voice-stop">Stop</button>
+      </div>
+      <div class="voice-heard">${V.heard ? `“${h(V.heard)}”` : `<span class="muted">Try “${h(VOICE_EXAMPLES[Math.floor(Date.now() / 8000) % VOICE_EXAMPLES.length])}”</span>`}</div>
+      ${V.error ? `<div class="voice-err">${h(V.error)}</div>` : ''}
+      ${last ? `<div class="voice-last"><span class="grow">✅ ${describeEvent(last.ev)}</span><button class="btn sm ghost" data-a="voice-undo">↶ Undo</button></div>` : ''}
+    </div>`;
+}
+
+function voiceStart(gameId) {
+  if (!SpeechRec) return toast("This phone's browser can't do voice. Try Chrome or Safari", true);
+  voiceStop();
+  Object.assign(V, { on: true, gameId, heard: '', error: '', last: null });
+  const rec = new SpeechRec();
+  rec.lang = 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 3;
+  rec.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (!r.isFinal) { V.heard = r[0].transcript; voiceRefresh(); continue; }
+      // try each alternative the recognizer offers until one parses
+      const g = S.db.games.find((x) => x.id === V.gameId);
+      if (!g) return voiceStop();
+      let parsed = null;
+      for (let k = 0; k < r.length && !parsed?.p1; k++) { const x = parsePlay(r[k].transcript, voiceRoster(g)); if (!parsed || x.p1) parsed = x; }
+      V.heard = r[0].transcript;
+      if (parsed.error) { V.error = parsed.error; navigator.vibrate?.([60, 60, 60]); voiceRefresh(); continue; }
+      V.error = '';
+      voiceLog(g, parsed);
+    }
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.error = 'Microphone is blocked. Allow it in your browser settings.'; V.on = false; }
+    else if (e.error !== 'no-speech' && e.error !== 'aborted') V.error = `Voice hiccup (${e.error}). Still listening.`;
+    voiceRefresh();
+  };
+  // Phones stop listening after a pause; keep going until they tap Stop.
+  rec.onend = () => { if (V.on && V.rec === rec) { try { rec.start(); } catch { /* already restarting */ } } };
+  V.rec = rec;
+  try { rec.start(); } catch (err) { V.error = err.message; }
+  render();
+}
+
+function voiceStop() {
+  const rec = V.rec;
+  V.on = false; V.rec = null;
+  try { rec?.abort(); } catch { /* not running */ }
+}
+
+async function voiceLog(g, { type, p1, p2 }) {
+  const t = E.EVENT_TYPES[type];
+  try {
+    const ev = await api('POST', `/api/games/${g.id}/events`, { type, p1, p2, by: me() });
+    V.last = { ev: ev || { type, p1, p2 }, gameId: g.id };
+    V.heard = '';
+    navigator.vibrate?.(t.points ? [80, 40, 160] : 60);
+    const game = S.db.games.find((x) => x.id === g.id);
+    const sc = gameInfo(game).summary.score;
+    toast(`🎤 ${t.emoji} ${t.label}: ${nick(p1)}${p2 ? ` / ${nick(p2)}` : ''}${t.points ? ` · ${sc.A}–${sc.B}` : ''}`);
+  } catch (e) {
+    V.error = e.message;
+  }
+  voiceRefresh();
+}
+
+// Update just the voice panel so the play-by-play doesn't jump around while talking.
+function voiceRefresh() {
+  const el = document.querySelector('.voice-live');
+  const g = S.db.games.find((x) => x.id === V.gameId);
+  if (!el || !g) { render(); return; }
+  const tmp = document.createElement('div');
+  tmp.innerHTML = voiceBar(g);
+  if (tmp.firstElementChild) el.replaceWith(tmp.firstElementChild); else render();
+}
+
 function logger(g) {
   const L = S.log?.gameId === g.id ? S.log : null;
   if (!L?.type) {
     return `
+      ${voiceBar(g)}
       <div class="log-grid">
         ${Object.entries(E.EVENT_TYPES).map(([k, t]) => `<button class="log-btn ${t.points ? 'score' : ''} t-${k}" data-a="log-type" data-g="${g.id}" data-t="${k}"><span>${t.emoji}</span>${h(t.label)}</button>`).join('')}
       </div>`;
@@ -926,6 +1041,7 @@ function viewStats() {
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
       <a class="btn sm ghost" href="#/awards">🏅 Awards</a>
+      <a class="btn sm ghost" href="#/wrapped">🎁 Wrapped</a>
       <select class="pill-select" data-ch="season" aria-label="Season">
         ${seasons().map((s) => `<option value="${h(s)}" ${S.season === s ? 'selected' : ''}>Season ${h(s)}</option>`).join('')}
         <option value="career" ${S.season === 'career' ? 'selected' : ''}>Career</option>
@@ -1207,6 +1323,99 @@ async function shareRecap(g) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// HFL Wrapped: a season story per player
+
+const wrappedSeason = (q) => q?.get?.('s') || (S.season !== 'career' && wrappedSeasons(S.db).includes(S.season) ? S.season : wrappedSeasons(S.db).at(-1));
+
+// The latest season that's over and has games: that's when Wrapped gets its banner.
+function wrappedBannerSeason() {
+  const done = wrappedSeasons(S.db).filter((x) => seasonOver(S.db, x));
+  return done.at(-1) || null;
+}
+
+function viewWrappedPicker(q) {
+  const seasonsList = wrappedSeasons(S.db);
+  const season = wrappedSeason(q);
+  if (!season) return `<a class="back" href="#/stats">‹ Stats</a><section class="card">${empty({ art: 'chart', title: 'Nothing to wrap yet', text: 'Wrapped shows up once a season has some finished games.' })}</section>`;
+  const table = E.seasonTable(S.db, S.league, season);
+  const list = Object.entries(table).filter(([id, x]) => x.gp && S.db.players.some((p) => p.id === id)).sort((a, b) => (b[0] === me()) - (a[0] === me()) || E.mvpScore(b[1]) - E.mvpScore(a[1]));
+  return `
+    <a class="back" href="#/stats">‹ Stats</a>
+    ${pageHead(`Season ${h(season)}${seasonOver(S.db, season) ? '' : ' · so far'}`, 'HFL Wrapped', seasonsList.length > 1 ? `
+      <select class="pill-select" data-ch="wrapped-season" aria-label="Season">${seasonsList.map((x) => `<option value="${h(x)}" ${x === season ? 'selected' : ''}>Season ${h(x)}</option>`).join('')}</select>` : '')}
+    <p class="muted">Everyone's season as a story: your numbers, your favorite target, your nemesis, your best play. Share yours to the group chat.</p>
+    <div class="wr-pick">${list.map(([id, x]) => `
+      <a class="wr-pick-row ${id === me() ? 'me' : ''}" href="#/wrapped/${id}?s=${encodeURIComponent(season)}">${avatar(id, 'lg')}<span class="grow"><b>${h(nick(id))}${id === me() ? ' <small>(you)</small>' : ''}</b><span class="muted small">${x.gp} games · ${x.w}-${x.l} · ${E.totalTDs(x)} TD</span></span><span class="wr-go">▶</span></a>`).join('')}
+    </div>`;
+}
+
+const WR_BG = ['wr-bg-0', 'wr-bg-1', 'wr-bg-2', 'wr-bg-3', 'wr-bg-4', 'wr-bg-5'];
+
+function viewWrapped(id, q) {
+  const season = wrappedSeason(q);
+  const w = season && buildWrapped(S.db, S.league, S.awards, id, season, { name: nick });
+  if (!w) return `<a class="back" href="#/wrapped">‹ Wrapped</a><section class="card">${empty({ art: 'chart', title: 'No season to wrap', text: `${h(nick(id))} didn't play a finished game in season ${h(season || '')}.` })}</section>`;
+  const key = `${id}|${season}`;
+  if (S.wr?.key !== key) S.wr = { key, i: 0 };
+  const i = Math.min(S.wr.i, w.slides.length - 1);
+  const sl = w.slides[i];
+  const body = (() => {
+    if (sl.kind === 'summary') {
+      const x = sl.summary;
+      return `
+        <div class="wr-sum">
+          <div class="wr-sum-head">${avatar(id, 'lg')}<div><div class="wr-kicker">${h(sl.kicker)}</div><div class="wr-sum-name">${h(x.name)}</div></div></div>
+          <div class="wr-grid">${[['Record', x.record], ['TDs', x.tds], ['Catches', x.rec], ['TD passes', x.passTD], ['INTs', x.ints], ['Clutch', `${x.clutch > 0 ? '+' : ''}${x.clutch}`]].map(([l, v]) => `<div><b>${h(v)}</b><small>${l}</small></div>`).join('')}</div>
+          ${x.buddy ? `<div class="wr-sum-row"><small class="t-good">Ride-or-die</small><b>${h(x.buddy)}</b></div>` : ''}
+          ${x.nemesis ? `<div class="wr-sum-row"><small class="t-bad">Nemesis</small><b>${h(x.nemesis)}</b></div>` : ''}
+          ${x.bestPlay ? `<div class="wr-sum-row"><small class="t-B">Best play</small><b>${h(x.bestPlay)}</b></div>` : ''}
+          <button class="btn hot block" data-a="share-wrapped" data-p="${id}" data-s="${h(season)}">📤 Share my Wrapped</button>
+          <a class="btn ghost block" href="#/wrapped?s=${encodeURIComponent(season)}">See the rest of the crew</a>
+        </div>`;
+    }
+    return `
+      <div class="wr-kicker">${h(sl.kicker)}</div>
+      ${sl.person ? `<div class="wr-person ${sl.tone === 'bad' ? 'bad' : ''}">${avatar(sl.person, 'lg')}</div>` : ''}
+      ${sl.emoji ? `<div class="wr-emoji">${sl.emoji}</div>` : ''}
+      <div class="wr-big">${h(sl.big)}${sl.unit ? `<small>${h(sl.unit)}</small>` : ''}</div>
+      ${sl.line ? `<p class="wr-line">${h(sl.line)}</p>` : ''}
+      ${sl.items ? `<ul class="wr-items">${sl.items.map((x) => `<li>${h(x)}</li>`).join('')}</ul>` : ''}
+      ${sl.gameId ? `<a class="wr-link" href="#/g/${sl.gameId}">See the game ›</a>` : ''}`;
+  })();
+  S.after = () => {
+    clearTimeout(S.wrTimer);
+    if (sl.kind !== 'summary') S.wrTimer = setTimeout(() => { if (S.wr?.key === key && location.hash.startsWith(`#/wrapped/${id}`)) { S.wr.i = i + 1; render(); } }, 6500);
+  };
+  return `
+    <div class="wrapped ${sl.tone === 'bad' ? 'wr-bad' : WR_BG[i % WR_BG.length]}">
+      <div class="wr-bars">${w.slides.map((_, k) => `<span class="${k < i ? 'done' : k === i ? 'on' : ''}"><i></i></span>`).join('')}</div>
+      <div class="wr-top"><span class="wr-brand">HFL WRAPPED ${h(season)}${w.over ? '' : ' · SO FAR'}</span><a class="wr-close" href="#/p/${id}" aria-label="Close">✕</a></div>
+      ${sl.kind !== 'summary' ? `<button class="wr-tap wr-prev" data-a="wr-go" data-d="-1" aria-label="Back"></button><button class="wr-tap wr-next" data-a="wr-go" data-d="1" aria-label="Next"></button>` : `<button class="wr-tap wr-prev" data-a="wr-go" data-d="-1" aria-label="Back"></button>`}
+      <div class="wr-body wr-kind-${sl.kind}" key="${i}">${body}</div>
+    </div>`;
+}
+
+async function shareWrapped(id, season) {
+  const w = buildWrapped(S.db, S.league, S.awards, id, season, { name: nick });
+  if (!w) return;
+  try {
+    const p = P(id);
+    let photo = photoOf(p);
+    if (photo?.startsWith('fsimg:')) photo = await S.backend?.getImage(photo.slice(6));
+    const blob = await wrappedToPngBlob(w.summary, { photo, color: p.color, initial: initials(p.name) });
+    const file = new File([blob], `hfl-wrapped-${season}-${nick(id)}.png`, { type: 'image/png' });
+    const text = `My HFL ${season} Wrapped: ${w.summary.headline}${w.summary.nemesis ? `. Nemesis: ${w.summary.nemesis}` : ''}`;
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: 'HFL Wrapped', text }); return; }
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: file.name });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('Wrapped image downloaded. Drop it in the group chat');
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('Could not share: ' + e.message, true);
+  }
+}
+
 function viewAwards() {
   const season = S.season === 'career' ? S.db.settings.season : S.season;
   const s = S.awards.seasons[season];
@@ -1271,6 +1480,11 @@ function viewCard(id) {
     <div class="card-stage">${tradingCard(id)}</div>
     <p class="muted small center">Tap the card to flip it.</p>
     <div class="badges">${badges(id).map((b) => `<span class="badge">${h(b)}</span>`).join('')}</div>
+    ${(() => {
+      const ss = wrappedSeasons(S.db).filter((x) => S.db.games.some((g) => g.status === 'final' && g.season === x && E.teamOf(g, id)));
+      const x = ss.at(-1);
+      return x ? `<a class="btn block wr-open" href="#/wrapped/${id}?s=${encodeURIComponent(x)}">🎁 ${id === me() ? 'My' : `${h(nick(id))}'s`} Season ${h(x)} Wrapped${seasonOver(S.db, x) ? '' : ' (so far)'}</a>` : '';
+    })()}
 
     ${ratingsSection(id, log)}
     ${progressionSection(id)}
@@ -1879,6 +2093,16 @@ const A = {
   },
   start: ({ g }) => run(() => api('POST', `/api/games/${g}/start`, {}), '🏈 Game on! Anyone can log plays'),
   'log-type': ({ g, t }) => { S.log = { gameId: g, type: t, p1: null }; render(); },
+  'voice-start': ({ g }) => voiceStart(g),
+  'wr-go': ({ d }) => { if (S.wr) { S.wr.i = Math.max(0, S.wr.i + Number(d)); render(); } },
+  'share-wrapped': ({ p, s }) => shareWrapped(p, s),
+  'voice-stop': () => { voiceStop(); render(); },
+  'voice-undo': () => {
+    const L = V.last;
+    V.last = null;
+    if (L?.ev?.id) run(() => api('DELETE', `/api/games/${L.gameId}/events/${L.ev.id}`), 'Play removed');
+    voiceRefresh();
+  },
   'log-cancel': () => { S.log = null; render(); },
   'log-pick': ({ p }) => {
     const L = S.log;
@@ -1958,6 +2182,7 @@ const CHANGE = {
     refreshRateRow(row);
   },
   season: (el) => { S.season = el.value; render(); },
+  'wrapped-season': (el) => { location.hash = `#/wrapped?s=${encodeURIComponent(el.value)}`; },
   'range-out': (el) => { const out = el.form.querySelector(`[data-out="${el.name}"]`); if (out) out.textContent = el.value; },
   import: (el) => {
     const file = el.files?.[0];
