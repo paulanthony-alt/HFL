@@ -11,7 +11,7 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 // ---------------------------------------------------------------------------
 // Madden-style ratings
 //
-// Every player has eleven ratings (20–99). Their overall (OVR) is a weighted mix of
+// Every player has sixteen ratings (20–99). Their overall (OVR) is a weighted mix of
 // those ratings, and the mix depends on position, just like Madden: a QB's OVR is
 // mostly throwing, a WR's is catching, routes and speed, and so on.
 
@@ -29,19 +29,24 @@ export const ATTRS = [
   { key: 'mcv', short: 'MCV', label: 'Man Coverage' },
   { key: 'tak', short: 'TAK', label: 'Tackling' },
   { key: 'sta', short: 'STA', label: 'Stamina' },
+  { key: 'bcv', short: 'BCV', label: 'Ball Carrier Vision' },
+  { key: 'btk', short: 'BTK', label: 'Break Tackle' },
+  { key: 'cod', short: 'COD', label: 'Change of Direction' },
+  { key: 'jkm', short: 'JKM', label: 'Juke Move' },
+  { key: 'car', short: 'CAR', label: 'Carrying' },
 ];
 export const ATTR_KEYS = ATTRS.map((a) => a.key);
-const DERIVED_FROM = { acc: 'spd', rls: 'rte' };
+const DERIVED_FROM = { acc: 'spd', rls: 'rte', bcv: 'rte', btk: 'str', cod: 'spd', jkm: 'spd', car: 'cth' };
 
 // How much each rating counts toward OVR at each position (each row adds up to 1).
 export const POSITION_WEIGHTS = {
-  QB:   { tha: 0.40, thp: 0.26, sta: 0.12, spd: 0.08, str: 0.08, acc: 0.06 },
-  WR:   { cth: 0.28, rte: 0.24, spd: 0.18, rls: 0.12, acc: 0.10, sta: 0.05, str: 0.03 },
-  RB:   { spd: 0.26, str: 0.22, acc: 0.18, cth: 0.14, sta: 0.12, rte: 0.08 },
-  DB:   { mcv: 0.36, spd: 0.22, acc: 0.14, tak: 0.12, cth: 0.08, sta: 0.08 },
+  QB:   { tha: 0.38, thp: 0.24, sta: 0.10, spd: 0.07, str: 0.06, acc: 0.06, bcv: 0.05, car: 0.04 },
+  WR:   { cth: 0.24, rte: 0.20, spd: 0.15, rls: 0.10, acc: 0.08, cod: 0.06, bcv: 0.05, jkm: 0.04, car: 0.03, sta: 0.03, btk: 0.02 },
+  RB:   { spd: 0.18, bcv: 0.14, btk: 0.13, acc: 0.12, jkm: 0.10, cod: 0.10, car: 0.08, str: 0.07, cth: 0.05, sta: 0.03 },
+  DB:   { mcv: 0.34, spd: 0.20, acc: 0.13, tak: 0.12, cod: 0.08, cth: 0.07, sta: 0.06 },
   LB:   { tak: 0.32, str: 0.20, spd: 0.14, mcv: 0.14, acc: 0.10, sta: 0.10 },
   RUSH: { spd: 0.26, str: 0.24, tak: 0.22, acc: 0.20, sta: 0.08 },
-  ATH:  { spd: 0.16, cth: 0.12, mcv: 0.12, acc: 0.10, sta: 0.10, rte: 0.08, str: 0.08, tak: 0.08, rls: 0.06, tha: 0.06, thp: 0.04 },
+  ATH:  { spd: 0.14, cth: 0.10, mcv: 0.10, acc: 0.08, sta: 0.08, rte: 0.07, tak: 0.07, str: 0.06, tha: 0.05, rls: 0.04, bcv: 0.04, cod: 0.04, car: 0.04, thp: 0.03, btk: 0.03, jkm: 0.03 },
 };
 
 // The ratings that matter most at a position, biggest first (shown on the card front).
@@ -51,7 +56,8 @@ export const keyAttrs = (position, n = 4) =>
 export const clampAttr = (v) => clamp(Math.round(Number(v)), ATTR_MIN, ATTR_MAX);
 export function overallExact(attrs, position) {
   const w = POSITION_WEIGHTS[position] || POSITION_WEIGHTS.ATH;
-  return Object.entries(w).reduce((sum, [k, wt]) => sum + wt * (attrs?.[k] ?? 70), 0);
+  const x = Object.entries(w).reduce((sum, [k, wt]) => sum + wt * (attrs?.[k] ?? 70), 0);
+  return Math.round(x * 1e6) / 1e6; // no floating-point dust from weights that add up to 1
 }
 export const overall = (attrs, position) => Math.round(clamp(overallExact(attrs, position), 1, 99));
 export const positionOveralls = (attrs) => Object.fromEntries(POSITIONS.map((pos) => [pos, overall(attrs, pos)]));
@@ -205,6 +211,12 @@ export function progression(s, actual, expected, current = {}) {
     mcv: clamp(s.defInt * 0.8, 0, 1.5),
     tak: clamp(s.sacks * 0.5, 0, 1),
     sta: 0.2, // showing up and playing a full game
+    // with the ball in his hands: finding the lane, shaking guys, not getting caught
+    bcv: clamp(s.rushTD * 0.5 + s.recTD * 0.3 + s.defTD * 0.3, 0, 1),
+    btk: clamp(s.rushTD * 0.4 + s.recTD * 0.2 + s.defTD * 0.4, 0, 1),
+    cod: clamp(s.rushTD * 0.4 + s.recTD * 0.3 + s.defInt * 0.2, 0, 1),
+    jkm: clamp(s.rushTD * 0.5 + s.recTD * 0.2 + s.defTD * 0.4, 0, 1),
+    car: clamp((s.rec + s.rushTD + s.defInt) * 0.1, 0, 0.8),
   };
   const result = (actual - expected) * 1.2;
   for (const k of ATTR_KEYS) {
@@ -244,7 +256,7 @@ export function computeLeague(db) {
       const before = rating(e.id);
       if (e.attrs) {
         for (const [k, v] of Object.entries(e.attrs)) { if (ATTR_KEYS.includes(k)) attrs[e.id][k] = clampAttr(v); }
-        // Ratings added later (ACC, RLS) start from their closest original one for players
+        // Ratings added later (ACC, RLS, BCV, BTK, COD, JKM, CAR) start from their closest original one for players
         // who were rated before they existed, until they're set on their own.
         for (const [newKey, from] of Object.entries(DERIVED_FROM)) {
           if (e.attrs[newKey] !== undefined) (setOwn[e.id] ||= new Set()).add(newKey);

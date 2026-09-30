@@ -3,6 +3,7 @@ import { ROSTER_VERSION, rsvpOpen, commissionerId, localToday } from './league.j
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
+import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf } from './insights.js';
 
 // ---------------------------------------------------------------------------
 // State + helpers
@@ -82,6 +83,11 @@ const ATTR_INFO = {
   mcv: ['Sticking to a receiver one-on-one and taking the ball away.', 'Up with interceptions.'],
   tak: ['Finishing the play: getting the tag or the flag when it counts.', 'Up with sacks.'],
   sta: ['Still fast and sharp in the last game of the day.', 'Up a little every game he plays.'],
+  bcv: ['Seeing the lane before it opens and taking the right path to the end zone.', 'Up with rushing TDs, receiving TDs and pick sixes.'],
+  btk: ["Slipping the tag or the flag grab when a defender's got him lined up.", 'Up with rushing TDs, pick sixes and receiving TDs.'],
+  cod: ['Cutting on a dime without losing speed, with or without the ball.', 'Up with rushing TDs, receiving TDs and picks.'],
+  jkm: ['The one move that leaves a defender grabbing air.', 'Up with rushing TDs, pick sixes and receiving TDs.'],
+  car: ['Ball security: keeping it locked up after the catch or on the run.', 'Up with every catch, rushing TD and pick.'],
 };
 const GRADES = [['elite', '90–99', 'Elite'], ['great', '80–89', 'Great'], ['good', '70–79', 'Good'], ['meh', '60–69', 'Average'], ['rough', '20–59', 'Needs work']];
 const keyLink = (label = 'Ratings key') => `<a class="sec-link" href="#/key">${label} ›</a>`;
@@ -174,6 +180,8 @@ function setDb(db, { remote = false } = {}) {
   S.db = db;
   S.league = E.computeLeague(db);
   S.awards = computeAwards(db, S.league);
+  S.form = formOf(db, S.league);
+  S.clutch = { career: clutchTable(db), season: clutchTable(db, db.settings.season) };
   if (!S.season) S.season = db.settings.season;
   remote ? requestRender() : render();
 }
@@ -578,7 +586,7 @@ function teamColumns(g, { editable = false, info = null } = {}) {
         <div class="muted small">avg OVR ${avg}</div>
         ${ids.map((id) => `
           <${editable ? `button data-a="swap" data-g="${g.id}" data-p="${id}"` : 'div'} class="tp">
-            ${avatar(id, 'xs')}<span class="tp-name">${h(nick(id))}</span><span class="tp-ovr">${ovr(id)}</span>
+            ${avatar(id, 'xs')}<span class="tp-name">${h(nick(id))}${S.form[id]?.hot ? ' 🔥' : S.form[id]?.cold ? ' ❄️' : ''}</span><span class="tp-ovr">${ovr(id)}</span>
           </${editable ? 'button' : 'div'}>`).join('')}
       </div>`;
   };
@@ -617,11 +625,64 @@ function teamsSection(g) {
       <button class="btn hot block" data-a="auto-teams" data-g="${g.id}" ${pool < 2 ? 'disabled' : ''}>Make balanced teams · ${pool} ${pool === 1 ? 'player' : 'players'}</button>`}`;
 }
 
+// ESPN-style win probability: team A's chance from 100% (top) to 0% (bottom).
+function momentumData(g) {
+  const info = gameInfo(g);
+  const series = winProbSeries(g, info, { expected: typicalPlays(S.db) });
+  return { series, swing: biggestSwing(series) };
+}
+
+function swingText(g, swing) {
+  if (!swing) return '';
+  const side = swing.delta > 0 ? 'A' : 'B';
+  const pts = Math.round(Math.abs(swing.delta) * 100);
+  return `${describeEvent(swing.ev)} <span class="swing-to t-${side}">${pts}% swing to ${h(teamName(g, side))}</span>`;
+}
+
+function momentumChart(g) {
+  if (!g.events.length) return '';
+  const { series, swing } = momentumData(g);
+  const W = 600, H = 150, pad = 6;
+  const last = series[series.length - 1];
+  // Live games fill in left to right, like the real thing; the empty space is what's left.
+  const x = (t) => pad + t * (W - pad * 2);
+  const y = (wp) => pad + (1 - wp) * (H - pad * 2);
+  const pts = series.map((p) => `${x(p.t).toFixed(1)},${y(p.wp).toFixed(1)}`).join(' ');
+  const mid = y(0.5);
+  const area = `M${x(0).toFixed(1)},${mid} L${pts.split(' ').join(' L')} L${x(last.t).toFixed(1)},${mid} Z`;
+  const scores = series.filter((p) => p.ev && E.EVENT_TYPES[p.ev.type]?.points);
+  const cur = last.wp;
+  const lead = cur >= 0.5 ? 'A' : 'B';
+  const leadPct = Math.round((lead === 'A' ? cur : 1 - cur) * 100);
+  return `
+    <section class="card momentum">
+      <div class="row-between"><h3>Win probability</h3><span class="wp-now t-${lead}">${g.status === 'final' ? (cur === 0.5 ? 'Tie' : `${h(teamName(g, lead))} won`) : `${h(teamName(g, lead))} ${leadPct}%`}</span></div>
+      <div class="wp-wrap">
+        <span class="wp-lab wp-lab-a t-A">${h(teamName(g, 'A'))}</span>
+        <span class="wp-lab wp-lab-b t-B">${h(teamName(g, 'B'))}</span>
+        <svg class="wp-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Win probability chart">
+          <defs>
+            <clipPath id="wpA-${g.id}"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath>
+            <clipPath id="wpB-${g.id}"><rect x="0" y="${mid}" width="${W}" height="${H - mid}"/></clipPath>
+          </defs>
+          <line x1="0" x2="${W}" y1="${mid}" y2="${mid}" class="wp-mid"/>
+          <path d="${area}" class="wp-fill-a" clip-path="url(#wpA-${g.id})"/>
+          <path d="${area}" class="wp-fill-b" clip-path="url(#wpB-${g.id})"/>
+          <polyline points="${pts}" class="wp-line" vector-effect="non-scaling-stroke"/>
+          ${swing ? `<line x1="${x(swing.t).toFixed(1)}" x2="${x(swing.t).toFixed(1)}" y1="0" y2="${H}" class="wp-swing" vector-effect="non-scaling-stroke"/>` : ''}
+        </svg>
+        ${scores.map((p) => `<i class="wp-dot t-${p.ev.team}" style="left:${(x(p.t) / W * 100).toFixed(2)}%;top:${(y(p.wp) / H * 100).toFixed(2)}%" title="${h(E.EVENT_TYPES[p.ev.type].label)}"></i>`).join('')}
+      </div>
+      ${swing ? `<div class="swing"><span class="kicker gold">Biggest momentum swing</span><div class="swing-body">${swingText(g, swing)}</div></div>` : ''}
+    </section>`;
+}
+
 function liveSection(g) {
   const info = gameInfo(g);
   const events = [...g.events].reverse();
   return `
     ${scoreboard(g)}
+    ${momentumChart(g)}
     <div class="muted small center">📝 Everyone keeps score: log any play you see, including your own.</div>
     ${logger(g)}
     ${sec('Play by play', `<span class="sec-link muted">${events.length} logged</span>`)}
@@ -691,6 +752,7 @@ function finalSection(g) {
   const info = gameInfo(g);
   return `
     ${scoreboard(g)}
+    ${momentumChart(g)}
     ${recapCard(g)}
     ${mvpBlock(g)}
     ${sec('Box score')}
@@ -781,7 +843,7 @@ function viewNewGame() {
 // Stats
 
 const STAT_TABS = {
-  mvp: '👑 MVP Race', tds: '🏈 TDs', qb: '🎯 QB Rating', record: '📈 Record', rec: '🙌 Receiving', def: '🦅 Defense', ovr: '⭐ Ratings',
+  mvp: '👑 MVP Race', tds: '🏈 TDs', qb: '🎯 QB Rating', record: '📈 Record', rec: '🙌 Receiving', def: '🦅 Defense', clutch: '🧊 Clutch', ovr: '⭐ Ratings',
 };
 
 function viewStats() {
@@ -814,6 +876,11 @@ function viewStats() {
   } else if (tab === 'def') {
     list = rows.filter((r) => r.s.defInt || r.s.sacks).sort((a, b) => (b.s.defInt * 5 + b.s.sacks * 3 + b.s.defTD * 6) - (a.s.defInt * 5 + a.s.sacks * 3 + a.s.defTD * 6));
     cols = [['INT', (s) => s.defInt], ['Pick6', (s) => s.defTD], ['Sacks', (s) => s.sacks]];
+  } else if (tab === 'clutch') {
+    const ct = season ? clutchTable(S.db, season) : S.clutch.career;
+    list = Object.entries(ct).filter(([id]) => P(id)).map(([id, c]) => ({ id, s: table[id] || E.blankStats(), c })).sort((a, b) => b.c.score - a.c.score || b.c.big - a.c.big);
+    cols = [['Clutch', (s, id, r) => `<b>${r.c.score > 0 ? '+' : ''}${r.c.score}</b>`], ['Big', (s, id, r) => r.c.big], ['Chokes', (s, id, r) => r.c.chokes], ['Games', (s, id, r) => r.c.games]];
+    note = 'Clutch plays happen in a one-score game (7 or less) in the last 40% of the plays. TD catch +3, TD run +3, TD pass +2, pick-six +4, INT +3, sack +2. Throwing a pick −3, dropping one −2.';
   } else if (tab === 'ovr') {
     list = activePlayers().map((p) => ({ id: p.id, s: table[p.id] || E.blankStats() })).sort((a, b) => ovr(b.id) - ovr(a.id));
     cols = [
@@ -826,7 +893,7 @@ function viewStats() {
       }],
       ...E.ATTRS.map((at) => [at.short, (s, id) => `<span class="g-${grade(attrsOf(id)[at.key])}">${attrsOf(id)[at.key]}</span>`]),
     ];
-    note = 'OVR comes from the eleven ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
+    note = 'OVR comes from the sixteen ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
   }
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
@@ -843,7 +910,7 @@ function viewStats() {
           <tr class="${r.id === me() ? 'me' : ''} ${i < 3 ? `lb-podium lb-${i + 1}` : ''}">
             <td class="medal">${medal(i)}</td>
             <td class="l"><a href="#/p/${r.id}">${avatar(r.id, 'xs')} ${h(nick(r.id))}</a></td>
-            ${cols.map(([, f]) => `<td>${f(r.s, r.id)}</td>`).join('')}
+            ${cols.map(([, f]) => `<td>${f(r.s, r.id, r)}</td>`).join('')}
           </tr>`).join('')}
         </tbody>
       </table></div>` : `<section class="card">${empty({ art: 'chart', title: 'No stats yet', text: 'Finish a game with a few plays logged and the leaderboards fill themselves in.' })}</section>`}
@@ -866,6 +933,18 @@ function gameLog(id) {
   });
 }
 
+function clutchLeader() {
+  const best = Object.entries(S.clutch.season).filter(([id, c]) => P(id) && c.score > 0 && c.big >= 2).sort((a, b) => b[1].score - a[1].score)[0];
+  return best?.[0] || null;
+}
+
+function formIcon(id) {
+  const f = S.form[id];
+  if (f?.hot) return `<span class="form-ic hot" title="TDs in ${f.hot} straight games">🔥${f.hot > 3 ? `<small>${f.hot}</small>` : ''}</span>`;
+  if (f?.cold) return `<span class="form-ic cold" title="${f.cold} straight games with a drop or pick">❄️</span>`;
+  return '';
+}
+
 function badges(id) {
   const c = careerOf(id);
   const log = gameLog(id);
@@ -874,7 +953,10 @@ function badges(id) {
   const out = [];
   if (c.mvps) out.push(`👑 ${c.mvps}× MVP`);
   if (S.db.fame.some((f) => f.category === 'best' && f.playerIds.includes(id))) out.push('🏛️ Hall of Famer');
-  if (streak >= 3) out.push(`🔥 ${streak}-game win streak`);
+  if (streak >= 3) out.push(`🏆 ${streak}-game win streak`);
+  const cl = S.clutch.career[id];
+  if (cl && cl.score >= 15) out.push('🧊 Mr. Clutch');
+  if (clutchLeader() === id) out.push(`🧊 Season ${S.db.settings.season} Clutch leader`);
   if (c.defInt >= 3) out.push('🦅 Ball Hawk');
   if (c.sacks >= 4) out.push('💥 QB Hunter');
   if (E.totalTDs(c) >= 5) out.push('🏈 End Zone Regular');
@@ -890,6 +972,9 @@ function badges(id) {
     for (const m of a.milestones) if (!top[m.key] || m.n > top[m.key].n) top[m.key] = m;
     for (const m of Object.values(top)) if (m.n >= 10) out.push(`${m.emoji} ${m.label}`);
   }
+  const f = S.form[id];
+  if (f?.hot) out.unshift(`🔥 On fire: TDs in ${f.hot} straight games`);
+  if (f?.cold) out.unshift(`❄️ Ice cold: ${f.cold} straight games with a drop or pick`);
   return out;
 }
 
@@ -900,8 +985,10 @@ function tradingCard(id, { mini = false } = {}) {
   const s = E.seasonTable(S.db, S.league, S.db.settings.season)[id] || E.blankStats();
   const front = `
     <div class="tc-face tc-front">
+      ${S.form[id]?.hot || S.form[id]?.cold ? '<i class="form-fx" aria-hidden="true"></i>' : ''}
       <div class="tc-top">
         <div class="tc-ovr">${o}<small>OVR</small></div>
+        ${formIcon(id)}
         <div class="tc-pos">${h(p.position || 'ATH')}${p.number !== '' && p.number !== undefined ? `<small>#${h(p.number)}</small>` : ''}</div>
       </div>
       ${(() => {
@@ -919,18 +1006,29 @@ function tradingCard(id, { mini = false } = {}) {
       <div class="tc-foot">HFL · ${h(S.db.settings.season)}</div>
     </div>`;
   const design = cardDesign(S.awards, p);
-  const cls = `tier-${tier(o)}${design ? ` design-${design}` : ''}`;
+  const f = S.form[id];
+  const cls = `tier-${tier(o)}${design ? ` design-${design}` : ''}${f?.hot ? ' form-hot' : f?.cold ? ' form-cold' : ''}`;
   if (mini) return `<a href="#/p/${id}" class="tcard mini ${cls}">${front}</a>`;
   const back = `
     <div class="tc-face tc-back">
-      <div class="tc-back-title">${h(p.nickname || p.name)} · Ratings</div>
-      <div class="tc-attrs">${E.ATTRS.map((at) => attrBar(at.key, a[at.key], null, { label: true })).join('')}</div>
+      <div class="tc-back-title">${h(p.nickname || p.name)}</div>
+      <div class="tc-sub">Key ratings · ${h(p.position || 'ATH')}</div>
+      <div class="tc-attrs">${E.keyAttrs(p.position, 6).map((k) => attrBar(k, a[k], null, { label: true })).join('')}</div>
+      <div class="tc-sub">Season ${h(S.db.settings.season)}</div>
       <div class="tc-season">
         <div><b>${s.gp}</b><small>GP</small></div>
-        <div><b>${s.w}-${s.l}</b><small>W-L</small></div>
+        <div><b>${s.w}-${s.l}${s.t ? `-${s.t}` : ''}</b><small>W-L</small></div>
         <div><b>${E.totalTDs(s)}</b><small>TD</small></div>
         <div><b>${s.mvps}</b><small>MVP</small></div>
+        ${(p.position === 'QB' || s.att > s.targets
+          ? [[`${s.comp}/${s.att}`, 'C/A'], [s.passTD, 'Pass TD'], [s.intThrown, 'INT thr'], [s.att >= 5 ? E.qbRating(s).toFixed(0) : '—', 'QB Rtg']]
+          : [[s.rec, 'Rec'], [s.drops, 'Drops'], [s.defInt, 'INT'], [s.sacks, 'Sacks']]
+        ).map(([v, l]) => `<div><b>${v}</b><small>${l}</small></div>`).join('')}
       </div>
+      ${(() => {
+        const acc = badges(id).slice(0, 3);
+        return acc.length ? `<div class="tc-sub">Accolades</div><div class="tc-acc">${acc.map((x) => `<span>${h(x)}</span>`).join('')}</div>` : '';
+      })()}
       <div class="tc-foot">tap to flip</div>
     </div>`;
   return `<div class="tcard big ${cls}" data-a="flip"><div class="tc-inner">${front}${back}</div></div>`;
@@ -978,6 +1076,7 @@ function careerSection(id) {
         <tr><td>Pass TD</td><td>${c.passTD}</td><td>INT thr</td><td>${c.intThrown}</td></tr>
         <tr><td>Catches</td><td>${c.rec}</td><td>Drops</td><td>${c.drops}</td></tr>
         <tr><td>INTs</td><td>${c.defInt}</td><td>Sacks</td><td>${c.sacks}</td></tr>
+        ${(() => { const cl = S.clutch.career[id]; return cl ? `<tr><td>🧊 Clutch</td><td>${cl.score > 0 ? '+' : ''}${cl.score}</td><td>Big / chokes</td><td>${cl.big} / ${cl.chokes}</td></tr>` : ''; })()}
       </table>
     </section>`;
 }
@@ -1053,6 +1152,7 @@ function recapCard(g, { compact = false } = {}) {
       <h3 class="recap-head">${h(r.headline)}</h3>
       ${r.goat ? `<div class="recap-goat">${avatar(r.goat.id, 'lg')}<div><div class="kicker gold">Goat of the day</div><b>${h(nick(r.goat.id))}</b><span class="muted small">${h(r.goat.line)}</span></div></div>` : ''}
       ${r.topPlays.length ? `<div class="chips-label">Top plays</div><ol class="recap-plays">${r.topPlays.map((p) => `<li><span>${p.emoji}</span>${h(p.text)}</li>`).join('')}</ol>` : ''}
+      ${(() => { const sw = g.events.length ? momentumData(g).swing : null; return sw ? `<div class="chips-label">Biggest momentum swing 📈</div><p class="recap-line">${swingText(g, sw)}</p>` : ''; })()}
       ${r.worstDrop ? `<div class="chips-label">Worst drop 🧈</div><p class="recap-line">${h(r.worstDrop.text)}</p>` : ''}
       ${r.milestones.length ? `<div class="chips-label">Milestones${r.milestones.length > 4 ? ` <span class="muted">(+${r.milestones.length - 4} more)</span>` : ''}</div><div class="chips">${[...r.milestones].sort((a, b) => b.n - a.n).slice(0, 4).map((m) => `<span class="pchip">${avatar(m.id, 'xs')} ${m.emoji} ${h(nick(m.id))}: ${h(m.label)}</span>`).join('')}</div>` : ''}
       ${r.roast ? `<blockquote class="recap-roast">“${h(r.roast.text)}”</blockquote>` : ''}
@@ -1198,7 +1298,7 @@ function viewEditPlayer(id) {
         ${p || !boss ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>`}
-        <p class="muted small">${!boss ? '🔒 Ratings and position are locked. The app updates them after every game.' : p ? 'His eleven Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
+        <p class="muted small">${!boss ? '🔒 Ratings and position are locked. The app updates them after every game.' : p ? 'His sixteen Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
         ${p || boss ? `<div class="photo-field">
           ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
           <label class="grow">Card photo <input type="file" name="photo" accept="image/*"></label>
@@ -1533,7 +1633,7 @@ function viewSettings() {
     </section>
     <section class="card">
       <div class="row-between"><h3>Rate players ${iAmCommish() ? '' : '🔒'}</h3><a class="btn sm ${iAmCommish() ? 'hot' : 'ghost'}" href="#/ratings">${iAmCommish() ? 'Open' : 'View'} ›</a></div>
-      <p class="muted small">Madden style: set each guy's eleven ratings (speed, acceleration, catching, throw power…) and position. His OVR is worked out from them.</p>
+      <p class="muted small">Madden style: set each guy's sixteen ratings (speed, acceleration, catching, throw power…) and position. His OVR is worked out from them.</p>
     </section>
     <section class="card">
       <h3>${S.auth?.managedBy === 'firebase' ? 'Crew password' : 'Crew passcode'}</h3>
@@ -1579,7 +1679,7 @@ function viewKey() {
     <a class="back" href="#/cards">‹ Cards</a>
     ${pageHead('Madden style', 'Ratings key')}
     <section class="card">
-      <h3>The eleven ratings</h3>
+      <h3>The sixteen ratings</h3>
       <p class="muted small">Every player is rated 20–99 in each one.</p>
       <div class="key-list">${E.ATTRS.map((a) => `
         <div class="key-row">
@@ -1601,8 +1701,16 @@ function viewKey() {
       </div>
     </section>
     <section class="card">
+      <h3>Form & clutch</h3>
+      <div class="key-list">
+        <div class="key-row"><span class="key-abbr">🔥</span><div><b>On fire</b><p>Scored or threw a TD in 3 straight games. His card catches fire until the streak ends.</p></div></div>
+        <div class="key-row"><span class="key-abbr">❄️</span><div><b>Ice cold</b><p>2+ straight games with a drop or a pick thrown and no TDs. His card frosts over until he finds the end zone.</p></div></div>
+        <div class="key-row"><span class="key-abbr">🧊</span><div><b>Clutch</b><p>Plays made in a one-score game late (the last 40% of the plays). Big plays add points, picks and drops take them away. Leaderboard under Stats → 🧊 Clutch. Most clutch points this season (with 2+ big plays) gets the Clutch badge; 15+ career clutch points makes you Mr. Clutch.</p></div></div>
+      </div>
+    </section>
+    <section class="card">
       <h3>How OVR works</h3>
-      <p class="muted small">Like Madden, OVR is a mix of the eleven ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
+      <p class="muted small">Like Madden, OVR is a mix of the sixteen ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
       <div class="key-pos">${E.POSITIONS.map((pos) => `
         <div class="key-pos-row"><b>${pos}</b><span>${Object.entries(E.POSITION_WEIGHTS[pos]).sort((x, y) => y[1] - x[1])
           .map(([k, w]) => `<em title="${h(attrMeta[k].label)}">${attrMeta[k].short} ${pct(w)}</em>`).join('')}</span></div>`).join('')}
@@ -1622,7 +1730,7 @@ function viewRatings() {
     <a class="back" href="#/settings">‹ Settings</a>
     <section class="card">
       <h2>Rate players</h2>
-      <p class="muted">Madden style. Every guy has eleven ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
+      <p class="muted">Madden style. Every guy has sixteen ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
       <form data-f="ratings" class="form rate-list">
         ${list.map(rateRow).join('')}
         <button class="btn hot block">Save ratings</button>

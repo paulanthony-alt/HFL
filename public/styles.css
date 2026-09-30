@@ -1106,7 +1106,6 @@ details.rate-row[open] > summary { margin-bottom: 10px; }
   .lb td.l a { gap: 8px; }
 }
 @media (max-width: 380px) {
-  .tc-back .tc-season { display: none; }
   :root { --gutter: 12px; }
   .card { padding: 14px; }
   .divider { margin-left: -14px; margin-right: -14px; }
@@ -1120,4 +1119,66 @@ details.rate-row[open] > summary { margin-bottom: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---------- form: 🔥 hot / ❄️ cold cards ---------- */
+.form-ic { position: absolute; left: 50%; top: 0; transform: translateX(-50%); font-size: 26px; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6)); }
+.form-ic small { font: 900 13px/1 var(--display); color: var(--gold); margin-left: 1px; }
+.form-ic.hot { animation: flicker 1.4s ease-in-out infinite alternate; }
+@keyframes flicker { to { transform: translateX(-50%) scale(1.12) rotate(-4deg); } }
+.tcard.mini .form-ic { font-size: 20px; }
+.form-fx { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 0; }
+.tcard.form-hot .tc-face { border-color: #ff7a1f; }
+.tcard.form-hot .tc-front { animation: hot-glow 1.8s ease-in-out infinite alternate; }
+@keyframes hot-glow {
+  from { box-shadow: 0 0 0 1px #000, 0 0 0 3px rgba(255, 90, 20, 0.7), 0 0 22px 2px rgba(255, 100, 20, 0.45), inset 0 0 40px rgba(0, 0, 0, 0.55); }
+  to { box-shadow: 0 0 0 1px #000, 0 0 0 4px rgba(255, 170, 40, 0.9), 0 0 38px 8px rgba(255, 90, 20, 0.6), inset 0 0 40px rgba(0, 0, 0, 0.55); }
+}
+.tcard.form-hot .form-fx {
+  background: radial-gradient(55% 40% at 25% 105%, rgba(255, 130, 20, 0.6), transparent 70%), radial-gradient(45% 35% at 75% 108%, rgba(255, 60, 20, 0.55), transparent 70%), linear-gradient(0deg, rgba(255, 90, 20, 0.22), transparent 45%);
+  mix-blend-mode: screen; animation: embers 1.3s ease-in-out infinite alternate;
+}
+.tcard.form-cold .tc-face { border-color: #9fe3ff; }
+.tcard.form-cold .tc-front { box-shadow: 0 0 0 1px #000, 0 0 0 4px rgba(120, 210, 255, 0.55), 0 0 26px 2px rgba(90, 200, 255, 0.35), inset 0 0 40px rgba(0, 0, 0, 0.55); }
+.tcard.form-cold .tc-art { filter: saturate(0.35) brightness(0.9) hue-rotate(-10deg); }
+.tcard.form-cold .form-fx {
+  z-index: 2; mix-blend-mode: screen;
+  background:
+    radial-gradient(40% 25% at 0% 0%, rgba(210, 240, 255, 0.55), transparent 70%),
+    radial-gradient(40% 25% at 100% 100%, rgba(210, 240, 255, 0.45), transparent 70%),
+    linear-gradient(160deg, rgba(120, 200, 255, 0.28), rgba(40, 90, 160, 0.12) 50%, rgba(160, 220, 255, 0.25));
+}
+@media (prefers-reduced-motion: reduce) { .form-ic.hot, .tcard.form-hot .tc-front, .tcard.form-hot .form-fx { animation: none; } }
+
+/* ---------- win probability / momentum ---------- */
+.t-A { color: var(--teamA); }
+.t-B { color: var(--teamB); }
+.momentum h3 { margin: 0; }
+.wp-now { font: 800 15px/1 var(--label); letter-spacing: 0.04em; text-transform: uppercase; }
+.wp-wrap { position: relative; margin-top: 10px; }
+.wp-chart { display: block; width: 100%; height: 150px; overflow: visible; border-radius: 10px; background: var(--bg-1); border: 1px solid var(--line); }
+.wp-mid { stroke: var(--line-2); stroke-dasharray: 4 5; }
+.wp-fill-a { fill: color-mix(in srgb, var(--teamA) 26%, transparent); }
+.wp-fill-b { fill: color-mix(in srgb, var(--teamB) 26%, transparent); }
+.wp-line { fill: none; stroke: var(--text); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.wp-swing { stroke: var(--gold); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.wp-dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px var(--bg-1); pointer-events: none; }
+.wp-lab { position: absolute; left: 10px; z-index: 1; font: 700 11px/1 var(--label); letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.85; pointer-events: none; }
+.wp-lab-a { top: 8px; }
+.wp-lab-b { bottom: 8px; }
+.swing { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.swing-body { margin-top: 6px; font-size: 15px; }
+.swing-to { display: block; margin-top: 3px; font: 800 13px/1.2 var(--label); letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* card back: key ratings, season stats, accolades */
+.tc-sub { position: relative; z-index: 1; margin: 7px 0 3px; font: 700 9.5px/1 var(--label); letter-spacing: 0.18em; text-transform: uppercase; color: var(--edge); opacity: 0.85; }
+.tc-back .tc-attrs { margin: 2px 0; gap: 2px; }
+.tc-back .tc-season { margin-top: 0; padding-top: 0; border-top: 0; row-gap: 7px; }
+.tc-back .tc-season b { font-size: 16px; }
+.tc-acc { display: flex; flex-direction: column; gap: 3px; }
+.tc-acc span { font: 600 11.5px/1.2 var(--body); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.05); border: 1px solid color-mix(in srgb, var(--edge) 22%, transparent); }
+.tc-back .tc-foot { margin-top: auto; }
+@media (max-width: 380px) {
+  .tc-back .tc-attrs .ab:nth-child(n+6) { display: none; }
+  .tc-acc span:nth-child(n+3) { display: none; }
 }

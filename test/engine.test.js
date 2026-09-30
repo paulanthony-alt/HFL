@@ -162,16 +162,16 @@ test('Madden OVR: weights per position, each adds up to 1', () => {
     assert.equal(Math.round(Object.values(w).reduce((a, b) => a + b, 0) * 1000), 1000, pos);
     for (const k of Object.keys(w)) assert.ok(E.ATTR_KEYS.includes(k), `${pos}.${k}`);
   }
-  assert.equal(E.ATTRS.length, 11);
-  assert.deepEqual(E.ATTR_KEYS, ['spd', 'acc', 'cth', 'rte', 'rls', 'thp', 'tha', 'str', 'mcv', 'tak', 'sta']);
+  assert.equal(E.ATTRS.length, 16);
+  assert.deepEqual(E.ATTR_KEYS, ['spd', 'acc', 'cth', 'rte', 'rls', 'thp', 'tha', 'str', 'mcv', 'tak', 'sta', 'bcv', 'btk', 'cod', 'jkm', 'car']);
 });
 
 test('Madden OVR: same player rates differently by position', () => {
-  const gunslinger = { spd: 60, cth: 50, rte: 45, thp: 95, tha: 92, str: 70, mcv: 40, tak: 45, sta: 80 };
+  const gunslinger = { spd: 60, cth: 50, rte: 45, thp: 95, tha: 92, str: 70, mcv: 40, tak: 45, sta: 80, bcv: 80, btk: 45, cod: 45, jkm: 40, car: 75 };
   assert.ok(E.overall(gunslinger, 'QB') >= 85, 'elite arm → elite QB');
   assert.ok(E.overall(gunslinger, 'WR') < 60, 'but not a receiver');
-  const burner = { spd: 97, cth: 90, rte: 88, thp: 40, tha: 40, str: 55, mcv: 60, tak: 50, sta: 85 };
-  assert.ok(E.overall(burner, 'WR') > E.overall(burner, 'QB') + 30);
+  const burner = { spd: 97, cth: 90, rte: 88, thp: 40, tha: 40, str: 55, mcv: 60, tak: 50, sta: 85, bcv: 80, btk: 60, cod: 92, jkm: 85, car: 80 };
+  assert.ok(E.overall(burner, 'WR') > E.overall(burner, 'QB') + 25);
   assert.deepEqual(E.keyAttrs('DB'), ['mcv', 'spd', 'acc', 'tak']);
   assert.deepEqual(E.keyAttrs('WR'), ['cth', 'rte', 'spd', 'rls']);
   const pos = E.positionOveralls(burner);
