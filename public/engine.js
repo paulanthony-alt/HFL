@@ -11,7 +11,7 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 // ---------------------------------------------------------------------------
 // Madden-style ratings
 //
-// Every player has sixteen ratings (20–99). Their overall (OVR) is a weighted mix of
+// Every player has seventeen ratings (20–99). Their overall (OVR) is a weighted mix of
 // those ratings, and the mix depends on position, just like Madden: a QB's OVR is
 // mostly throwing, a WR's is catching, routes and speed, and so on.
 
@@ -34,19 +34,20 @@ export const ATTRS = [
   { key: 'cod', short: 'COD', label: 'Change of Direction' },
   { key: 'jkm', short: 'JKM', label: 'Juke Move' },
   { key: 'car', short: 'CAR', label: 'Carrying' },
+  { key: 'rac', short: 'RAC', label: 'Run After Catch' },
 ];
 export const ATTR_KEYS = ATTRS.map((a) => a.key);
-const DERIVED_FROM = { acc: 'spd', rls: 'rte', bcv: 'rte', btk: 'str', cod: 'spd', jkm: 'spd', car: 'cth' };
+const DERIVED_FROM = { acc: 'spd', rls: 'rte', bcv: 'rte', btk: 'str', cod: 'spd', jkm: 'spd', car: 'cth', rac: 'spd' };
 
 // How much each rating counts toward OVR at each position (each row adds up to 1).
 export const POSITION_WEIGHTS = {
   QB:   { tha: 0.38, thp: 0.24, sta: 0.10, spd: 0.07, str: 0.06, acc: 0.06, bcv: 0.05, car: 0.04 },
-  WR:   { cth: 0.24, rte: 0.20, spd: 0.15, rls: 0.10, acc: 0.08, cod: 0.06, bcv: 0.05, jkm: 0.04, car: 0.03, sta: 0.03, btk: 0.02 },
-  RB:   { spd: 0.18, bcv: 0.14, btk: 0.13, acc: 0.12, jkm: 0.10, cod: 0.10, car: 0.08, str: 0.07, cth: 0.05, sta: 0.03 },
+  WR:   { cth: 0.23, rte: 0.19, spd: 0.14, rls: 0.10, acc: 0.08, rac: 0.06, cod: 0.05, bcv: 0.04, jkm: 0.03, car: 0.03, sta: 0.03, btk: 0.02 },
+  RB:   { spd: 0.17, bcv: 0.13, btk: 0.12, acc: 0.11, jkm: 0.10, cod: 0.09, car: 0.08, str: 0.07, rac: 0.06, cth: 0.04, sta: 0.03 },
   DB:   { mcv: 0.34, spd: 0.20, acc: 0.13, tak: 0.12, cod: 0.08, cth: 0.07, sta: 0.06 },
   LB:   { tak: 0.32, str: 0.20, spd: 0.14, mcv: 0.14, acc: 0.10, sta: 0.10 },
   RUSH: { spd: 0.26, str: 0.24, tak: 0.22, acc: 0.20, sta: 0.08 },
-  ATH:  { spd: 0.14, cth: 0.10, mcv: 0.10, acc: 0.08, sta: 0.08, rte: 0.07, tak: 0.07, str: 0.06, tha: 0.05, rls: 0.04, bcv: 0.04, cod: 0.04, car: 0.04, thp: 0.03, btk: 0.03, jkm: 0.03 },
+  ATH:  { spd: 0.13, cth: 0.10, mcv: 0.10, acc: 0.08, sta: 0.07, rte: 0.07, tak: 0.07, str: 0.06, tha: 0.05, rls: 0.04, bcv: 0.04, cod: 0.04, car: 0.03, rac: 0.03, thp: 0.03, btk: 0.03, jkm: 0.03 },
 };
 
 // The ratings that matter most at a position, biggest first (shown on the card front).
@@ -217,6 +218,7 @@ export function progression(s, actual, expected, current = {}) {
     cod: clamp(s.rushTD * 0.4 + s.recTD * 0.3 + s.defInt * 0.2, 0, 1),
     jkm: clamp(s.rushTD * 0.5 + s.recTD * 0.2 + s.defTD * 0.4, 0, 1),
     car: clamp((s.rec + s.rushTD + s.defInt) * 0.1, 0, 0.8),
+    rac: clamp(s.recTD * 0.5 + s.rec * 0.1, 0, 1), // catching it and taking it to the house
   };
   const result = (actual - expected) * 1.2;
   for (const k of ATTR_KEYS) {
@@ -256,7 +258,7 @@ export function computeLeague(db) {
       const before = rating(e.id);
       if (e.attrs) {
         for (const [k, v] of Object.entries(e.attrs)) { if (ATTR_KEYS.includes(k)) attrs[e.id][k] = clampAttr(v); }
-        // Ratings added later (ACC, RLS, BCV, BTK, COD, JKM, CAR) start from their closest original one for players
+        // Ratings added later (ACC, RLS, BCV, BTK, COD, JKM, CAR, RAC) start from their closest original one for players
         // who were rated before they existed, until they're set on their own.
         for (const [newKey, from] of Object.entries(DERIVED_FROM)) {
           if (e.attrs[newKey] !== undefined) (setOwn[e.id] ||= new Set()).add(newKey);

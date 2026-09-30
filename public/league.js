@@ -98,6 +98,11 @@ const player = (db, id, name = 'player') => {
   return find(db.players, id, name);
 };
 
+// Height in inches (4'0" to 8'0") and weight in pounds; empty clears them.
+const blank = (v) => v === '' || v === null || v === undefined;
+const cleanHeight = (v) => (blank(v) ? null : num(v, 48, 96, { name: 'height (inches)', int: true }));
+const cleanWeight = (v) => (blank(v) ? null : num(v, 60, 400, { name: 'weight (lbs)', int: true }));
+
 function cleanPlayer(body, existing = {}) {
   const p = { ...existing };
   if ('name' in body || !existing.id) p.name = str(body.name, 40, { required: true, name: 'name' });
@@ -109,6 +114,8 @@ function cleanPlayer(body, existing = {}) {
   if ('color' in body) p.color = color(body.color, existing.color || '#ff6b1a');
   if ('active' in body) p.active = !!body.active;
   if ('cardStyle' in body) p.cardStyle = oneOf(body.cardStyle || '', DESIGN_KEYS, 'card design');
+  if ('heightIn' in body) p.heightIn = cleanHeight(body.heightIn);
+  if ('weightLb' in body) p.weightLb = cleanWeight(body.weightLb);
   return p;
 }
 
@@ -180,6 +187,43 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   on('PATCH', '/api/settings', (db, b) => {
     if ('crewName' in b) db.settings.crewName = str(b.crewName, 30, { required: true, name: 'crew name' });
     if ('season' in b) db.settings.season = str(b.season, 20, { required: true, name: 'season' });
+  });
+  // League rules (settings.rules): everyone reads them, only league admins edit.
+  const rules = (db) => (db.settings.rules ||= []);
+  const cleanRule = (b, r = {}) => ({
+    ...r,
+    title: 'title' in b || !r.id ? str(b.title, 80, { required: true, name: 'rule title' }) : r.title,
+    text: 'text' in b || !r.id ? str(b.text, 2000, { name: 'rule text' }) : r.text,
+    updatedAt: now(),
+  });
+  on('POST', '/api/rules', (db, b) => {
+    requireCommish(db, b, 'change the rules');
+    if (rules(db).length >= 100) throw bad('that is a lot of rules');
+    const r = { id: newId(), ...cleanRule(b) };
+    rules(db).push(r);
+    return r;
+  });
+  on('PATCH', '/api/rules/:rid', (db, b, { rid }) => {
+    requireCommish(db, b, 'change the rules');
+    const i = rules(db).findIndex((r) => r.id === rid);
+    if (i < 0) throw new HttpError(404, 'rule not found');
+    db.settings.rules[i] = cleanRule(b, db.settings.rules[i]);
+    return db.settings.rules[i];
+  });
+  on('DELETE', '/api/rules/:rid', (db, b, { rid }) => {
+    requireCommish(db, b, 'change the rules');
+    if (!rules(db).some((r) => r.id === rid)) throw new HttpError(404, 'rule not found');
+    db.settings.rules = db.settings.rules.filter((r) => r.id !== rid);
+  });
+  on('POST', '/api/rules/:rid/move', (db, b, { rid }) => {
+    requireCommish(db, b, 'change the rules');
+    const list = rules(db);
+    const i = list.findIndex((r) => r.id === rid);
+    if (i < 0) throw new HttpError(404, 'rule not found');
+    const j = i + (Number(b.dir) < 0 ? -1 : 1);
+    if (j < 0 || j >= list.length) return list;
+    [list[i], list[j]] = [list[j], list[i]];
+    return list;
   });
   on('POST', '/api/seed-demo', (db) => {
     if (db.players.length) throw bad('demo data can only be loaded into an empty league');
@@ -317,6 +361,8 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
         edit.ovr = num(value, ATTR_MIN, ATTR_MAX, { name: `${p.name}'s rating`, int: true });
       } else {
         if (value?.position !== undefined) p.position = oneOf(value.position, POSITIONS, 'position');
+        if (value && 'heightIn' in value) p.heightIn = cleanHeight(value.heightIn);
+        if (value && 'weightLb' in value) p.weightLb = cleanWeight(value.weightLb);
         const attrs = value?.attrs || {};
         if (Object.keys(attrs).length) {
           edit.attrs = {};

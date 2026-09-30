@@ -78,6 +78,9 @@ const avatar = (id, cls = '') => {
   const bg = photoBg(ph);
   return `<span class="av ${cls} ${ph ? 'has-photo' : ''}" style="--c:${h(p.color || '#ff6b1a')}${bg.style}"${bg.attr}>${h(p.emoji || initials(p.name))}</span>`;
 };
+// 73 → 6'1"
+const fmtHeight = (inches) => (inches ? `${Math.floor(inches / 12)}'${inches % 12}"` : '');
+const bioLine = (p) => [fmtHeight(p?.heightIn), p?.weightLb ? `${p.weightLb} lbs` : ''].filter(Boolean).join(' · ');
 const tier = (o) => (o >= 90 ? 'legend' : o >= 80 ? 'gold' : o >= 70 ? 'silver' : 'bronze');
 const attrsOf = (id) => S.league.attrs[id] || E.baseAttrs(P(id));
 // Madden-style rating colors: 90+ elite, 80s great, 70s good, 60s meh, below that rough.
@@ -100,6 +103,7 @@ const ATTR_INFO = {
   cod: ['Cutting on a dime without losing speed, with or without the ball.', 'Up with rushing TDs, receiving TDs and picks.'],
   jkm: ['The one move that leaves a defender grabbing air.', 'Up with rushing TDs, pick sixes and receiving TDs.'],
   car: ['Ball security: keeping it locked up after the catch or on the run.', 'Up with every catch, rushing TD and pick.'],
+  rac: ['What happens after the ball is caught: turning upfield and turning a short one into a long one.', 'Up with catches, and a lot with receiving TDs.'],
 };
 const GRADES = [['elite', '90–99', 'Elite'], ['great', '80–89', 'Great'], ['good', '70–79', 'Good'], ['meh', '60–69', 'Average'], ['rough', '20–59', 'Needs work']];
 const keyLink = (label = 'Ratings key') => `<a class="sec-link" href="#/key">${label} ›</a>`;
@@ -265,6 +269,7 @@ const ROUTES = [
   [/^#\/wrapped\/([\w-]+)$/, viewWrapped, ''],
   [/^#\/settings$/, viewSettings, ''],
   [/^#\/cast$/, viewCast, ''],
+  [/^#\/rules$/, viewRules, 'rules'],
 ];
 
 function render() {
@@ -1136,7 +1141,7 @@ function viewStats() {
       }],
       ...E.ATTRS.map((at) => [at.short, (s, id) => `<span class="g-${grade(attrsOf(id)[at.key])}">${attrsOf(id)[at.key]}</span>`]),
     ];
-    note = 'OVR comes from the sixteen ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
+    note = 'OVR comes from the seventeen ratings, weighted by position. <a href="#/key">Ratings key ›</a> · <a href="#/ratings">Rate players ›</a>';
   }
   return `
     ${pageHead(S.season === 'career' ? 'All-time' : `Season ${h(S.season)}`, 'Leaderboards', `
@@ -1244,6 +1249,7 @@ function tradingCard(id, { mini = false } = {}) {
       })()}
       <div class="tc-name">${h(p.name)}</div>
       ${p.nickname ? `<div class="tc-nick">“${h(p.nickname)}”</div>` : '<div class="tc-nick">&nbsp;</div>'}
+      ${bioLine(p) ? `<div class="tc-bio">${h(bioLine(p))}</div>` : ''}
       <div class="tc-stats">
         ${E.keyAttrs(p.position).map((k) => `<div><b class="g-${grade(a[k])}">${a[k]}</b><small>${attrMeta[k].short}</small><em>${h(attrMeta[k].label)}</em></div>`).join('')}
       </div>
@@ -1296,6 +1302,7 @@ function ratingsSection(id, log) {
   return `
     <section class="card">
       <div class="row-between"><h3>Ratings</h3>${keyLink('What these mean')}</div>
+      ${bioLine(p) ? `<div class="bio-row">${p.heightIn ? `<span><small>Height</small><b>${h(fmtHeight(p.heightIn))}</b></span>` : ''}${p.weightLb ? `<span><small>Weight</small><b>${p.weightLb} <em>lbs</em></b></span>` : ''}</div>` : ''}
       ${last ? `<p class="muted small">+/− = change from his last game (${h(fmtDate(last.g.date, { month: 'short', day: 'numeric' }))})</p>` : ''}
       <div class="attr-list">${order.map((k) => attrBar(k, a[k], last ? changes[k] : null, { label: true })).join('')}</div>
       <div class="chips-label">OVR at every position</div>
@@ -1637,10 +1644,14 @@ function viewEditPlayer(id) {
           <label>Card emoji <input name="emoji" maxlength="8" value="${h(v.emoji)}" placeholder="⚡"></label>
           <label>Card color <input name="color" type="color" value="${h(v.color || '#ff6b1a')}"></label>
         </div>
+        ${boss ? `<div class="form-row">
+          <label>Height ${heightPicker(v.heightIn, 'height')}</label>
+          <label>Weight (lbs) <input name="weightLb" type="number" min="60" max="400" inputmode="numeric" value="${h(v.weightLb ?? '')}" placeholder="180"></label>
+        </div>` : bioLine(v) ? `<label>Height & weight ${lockNote(`${h(bioLine(v))} · set by the league`)}</label>` : ''}
         ${p || !boss ? '' : `<label>Starting level: <b data-out="startOvr">${v.startOvr ?? 70}</b>
           <input name="startOvr" type="range" min="40" max="99" value="${v.startOvr ?? 70}" data-ch="range-out">
         </label>`}
-        <p class="muted small">${!boss ? '🔒 Ratings and position are locked. The app updates them after every game.' : p ? 'His sixteen Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
+        <p class="muted small">${!boss ? '🔒 Ratings and position are locked. The app updates them after every game.' : p ? 'His seventeen Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
         ${p || boss ? `<div class="photo-field">
           ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
           <label class="grow">Card photo <input type="file" name="photo" accept="image/*" data-ch="photo-preview"></label>
@@ -1980,6 +1991,45 @@ async function resizeImage(file, max = 1200) {
 // ---------------------------------------------------------------------------
 // Settings
 
+// ---------------------------------------------------------------------------
+// League rules (league admins write them, everyone reads them)
+
+function ruleForm(r = null) {
+  return `
+    <form data-f="rule" data-id="${r ? r.id : ''}" class="form rule-form">
+      <label>Rule <input name="title" required maxlength="80" value="${h(r?.title || '')}" placeholder="Two-hand touch below the waist"></label>
+      <label>Details <span class="muted small">(optional)</span><textarea name="text" maxlength="2000" placeholder="Anything the crew argues about goes here.">${h(r?.text || '')}</textarea></label>
+      <div class="btn-row tight">
+        ${r ? '<button type="button" class="btn ghost" data-a="rule-cancel">Cancel</button>' : ''}
+        <button class="btn hot grow">${r ? 'Save rule' : '+ Add rule'}</button>
+      </div>
+    </form>`;
+}
+
+function viewRules() {
+  const rules = S.db.settings.rules || [];
+  const boss = iAmCommish();
+  const lockedAdmin = !boss && isAdmin(S.me);
+  return `
+    ${pageHead(`${rules.length} rule${rules.length === 1 ? '' : 's'}`, 'League rules')}
+    ${lockedAdmin ? `<a class="banner" href="#/unlock/${S.me}"><span class="banner-dot"></span><span><b>Enter your PIN to edit the rules.</b></span><span class="banner-go">›</span></a>` : ''}
+    ${rules.length ? `<ol class="rules-list">${rules.map((r, i) => (boss && S.ruleEdit === r.id ? `<li class="rule">${ruleForm(r)}</li>` : `
+      <li class="rule">
+        <h3>${h(r.title)}</h3>
+        ${r.text ? `<p>${h(r.text)}</p>` : ''}
+        ${boss ? `
+          <div class="rule-tools">
+            <button class="btn sm ghost" data-a="rule-edit" data-r="${r.id}">✎ Edit</button>
+            <button class="btn sm ghost" data-a="rule-move" data-r="${r.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+            <button class="btn sm ghost" data-a="rule-move" data-r="${r.id}" data-d="1" ${i === rules.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+            <button class="btn sm ghost" data-a="rule-delete" data-r="${r.id}">🗑 Delete</button>
+          </div>
+          ${r.updatedAt ? `<div class="rule-meta">Updated ${h(fmtDate(r.updatedAt.slice(0, 10), { month: 'short', day: 'numeric', year: 'numeric' }))}</div>` : ''}` : ''}
+      </li>`)).join('')}</ol>`
+    : `<section class="card">${empty({ art: 'whistle', title: 'No rules yet', text: boss ? 'Write the first one below. Everybody sees them here.' : 'The league admins haven\'t posted any rules yet.' })}</section>`}
+    ${boss ? `<section class="card"><h3>Add a rule</h3>${ruleForm()}</section>` : ''}`;
+}
+
 function viewSettings() {
   const players = [...allPlayers()].sort((a, b) => a.name.localeCompare(b.name));
   return `
@@ -2002,7 +2052,7 @@ function viewSettings() {
     </section>
     <section class="card">
       <div class="row-between"><h3>Rate players ${iAmCommish() ? '' : '🔒'}</h3><a class="btn sm ${iAmCommish() ? 'hot' : 'ghost'}" href="#/ratings">${iAmCommish() ? 'Open' : 'View'} ›</a></div>
-      <p class="muted small">Madden style: set each guy's sixteen ratings (speed, acceleration, catching, throw power…) and position. His OVR is worked out from them.</p>
+      <p class="muted small">Madden style: set each guy's seventeen ratings (speed, acceleration, catching, throw power…) and position. His OVR is worked out from them.</p>
     </section>
     <section class="card">
       <h3>${S.auth?.managedBy === 'firebase' ? 'Crew password' : 'Crew passcode'}</h3>
@@ -2048,7 +2098,7 @@ function viewKey() {
     <a class="back" href="#/cards">‹ Cards</a>
     ${pageHead('Madden style', 'Ratings key')}
     <section class="card">
-      <h3>The sixteen ratings</h3>
+      <h3>The seventeen ratings</h3>
       <p class="muted small">Every player is rated 20–99 in each one.</p>
       <div class="key-list">${E.ATTRS.map((a) => `
         <div class="key-row">
@@ -2079,7 +2129,7 @@ function viewKey() {
     </section>
     <section class="card">
       <h3>How OVR works</h3>
-      <p class="muted small">Like Madden, OVR is a mix of the sixteen ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
+      <p class="muted small">Like Madden, OVR is a mix of the seventeen ratings, and the mix depends on your position. The same guy can be a 90 at WR and a 65 at QB. His player page shows his OVR at every position.</p>
       <div class="key-pos">${E.POSITIONS.map((pos) => `
         <div class="key-pos-row"><b>${pos}</b><span>${Object.entries(E.POSITION_WEIGHTS[pos]).sort((x, y) => y[1] - x[1])
           .map(([k, w]) => `<em title="${h(attrMeta[k].label)}">${attrMeta[k].short} ${pct(w)}</em>`).join('')}</span></div>`).join('')}
@@ -2099,13 +2149,25 @@ function viewRatings() {
     <a class="back" href="#/settings">‹ Settings</a>
     <section class="card">
       <h2>Rate players</h2>
-      <p class="muted">Madden style. Every guy has sixteen ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
+      <p class="muted">Madden style. Every guy has seventeen ratings from 20 to 99, and his <b>OVR</b> comes from them based on his position: a QB's is mostly throwing, a WR's is catching, routes and speed, a DB's is coverage and speed. Tap a player to set him up. After that his ratings move with every game he plays. <a href="#/key">What each rating means ›</a></p>
       <form data-f="ratings" class="form rate-list">
         ${list.map(rateRow).join('')}
         <button class="btn hot block">Save ratings</button>
       </form>
     </section>`;
 }
+
+// Height as feet + inches pickers. mode 'height' = named form fields, 'rate' = Rate players row.
+function heightPicker(inches, mode) {
+  const ft = inches ? Math.floor(inches / 12) : '';
+  const inch = inches ? inches % 12 : 0;
+  const a = mode === 'rate' ? (k) => `data-bio="${k}"${k === 'ft' ? ` data-cur="${inches ?? ''}"` : ''}` : (k) => `name="${k === 'ft' ? 'heightFt' : 'heightIn'}"`;
+  return `<span class="height-pick">
+    <select ${a('ft')}${mode === 'rate' ? ' data-ch="rate-bio"' : ''} aria-label="Feet"><option value="">–</option>${[4, 5, 6, 7].map((f) => `<option value="${f}" ${f === ft ? 'selected' : ''}>${f}′</option>`).join('')}</select>
+    <select ${a('in')}${mode === 'rate' ? ' data-ch="rate-bio"' : ''} aria-label="Inches">${[...Array(12).keys()].map((i) => `<option value="${i}" ${i === inch ? 'selected' : ''}>${i}″</option>`).join('')}</select>
+  </span>`;
+}
+const heightFrom = (ft, inch) => (ft ? Number(ft) * 12 + Number(inch || 0) : '');
 
 function rateRow(p) {
   const a = attrsOf(p.id);
@@ -2124,6 +2186,8 @@ function rateRow(p) {
           <label>Position
             <select data-ch="rate-pos">${E.POSITIONS.map((x) => `<option ${x === pos ? 'selected' : ''}>${x}</option>`).join('')}</select>
           </label>
+          <label>Height ${heightPicker(p.heightIn, 'rate')}</label>
+          <label>Weight <input type="number" min="60" max="400" inputmode="numeric" placeholder="lbs" value="${h(p.weightLb ?? '')}" data-bio="weight" data-cur="${h(p.weightLb ?? '')}" data-ch="rate-bio"></label>
           <label>Set all
             <input type="range" min="${E.ATTR_MIN}" max="${E.ATTR_MAX}" value="${Math.round(E.ATTR_KEYS.reduce((t, k) => t + a[k], 0) / E.ATTR_KEYS.length)}" data-ch="rate-all">
           </label>
@@ -2153,6 +2217,8 @@ function refreshRateRow(row) {
   });
   const pos = row.querySelector('[data-ch=rate-pos]').value;
   if (pos !== row.dataset.pos) changed = true;
+  const ft = row.querySelector('[data-bio=ft]'), w = row.querySelector('[data-bio=weight]');
+  if (String(heightFrom(ft.value, row.querySelector('[data-bio=in]').value)) !== ft.dataset.cur || w.value !== w.dataset.cur) changed = true;
   const o = E.overall(attrs, pos);
   const head = row.querySelector('.rate-val');
   head.textContent = o;
@@ -2225,6 +2291,13 @@ const A = {
     run(() => api('POST', `/api/games/${g}/clock`, { action: c }));
   },
   'voice-start': ({ g }) => voiceStart(g),
+  'rule-edit': ({ r }) => { S.ruleEdit = r; render(); },
+  'rule-cancel': () => { S.ruleEdit = null; render(); },
+  'rule-move': ({ r, d }) => run(() => api('POST', `/api/rules/${r}/move`, { dir: Number(d) })),
+  'rule-delete': ({ r }) => {
+    const rule = (S.db.settings.rules || []).find((x) => x.id === r);
+    if (rule && confirm(`Delete the rule “${rule.title}”?`)) run(() => api('DELETE', `/api/rules/${r}`), 'Rule deleted');
+  },
   'wr-go': ({ d }) => { if (S.wr) { S.wr.i = Math.max(0, S.wr.i + Number(d)); render(); } },
   'share-wrapped': ({ p, s }) => shareWrapped(p, s),
   'voice-stop': () => { voiceStop(); render(); },
@@ -2307,6 +2380,7 @@ function submitLog({ p1, p2 }) {
 const CHANGE = {
   rate: (el) => refreshRateRow(el.closest('.rate-row')),
   'rate-pos': (el) => refreshRateRow(el.closest('.rate-row')),
+  'rate-bio': (el) => refreshRateRow(el.closest('.rate-row')),
   'rate-all': (el) => {
     const row = el.closest('.rate-row');
     row.querySelectorAll('input[data-attr]').forEach((i) => { i.value = el.value; });
@@ -2353,6 +2427,15 @@ const FORMS = {
     toast(form.dataset.claimed ? `Unlocked. What's up, ${nick(id)} 👊` : `🔒 ${P(id).name} is yours. Don't forget your PIN`);
     location.hash = P(id).nickname ? '#/' : '#/nickname';
   },
+  rule: async (d, form) => {
+    const id = form.dataset.id;
+    const body = { title: d.title, text: d.text };
+    const saved = await run(() => api(id ? 'PATCH' : 'POST', id ? `/api/rules/${id}` : '/api/rules', body), id ? 'Rule saved' : '📜 Rule added');
+    if (!saved) return;
+    S.ruleEdit = null;
+    if (!id) form.reset();
+    render();
+  },
   'my-nickname': async (d, form) => {
     const nickname = d.nickname.trim();
     const saved = await run(() => api('PATCH', `/api/players/${form.dataset.id}`, { nickname }), nickname ? `Nickname saved: “${nickname}” 🏈` : 'Nickname cleared');
@@ -2367,6 +2450,10 @@ const FORMS = {
       });
       const pos = row.querySelector('[data-ch=rate-pos]').value;
       if (pos !== row.dataset.pos) entry.position = pos;
+      const hIn = heightFrom(row.querySelector('[data-bio=ft]').value, row.querySelector('[data-bio=in]').value);
+      if (String(hIn) !== String(row.querySelector('[data-bio=ft]').dataset.cur)) entry.heightIn = hIn;
+      const w = row.querySelector('[data-bio=weight]');
+      if (w.value !== w.dataset.cur) entry.weightLb = w.value;
       if (Object.keys(entry).length) ratings[row.dataset.pid] = entry;
     });
     const n = Object.keys(ratings).length;
@@ -2403,7 +2490,7 @@ const FORMS = {
     const boss = iAmCommish();
     const body = { nickname: d.nickname, number: d.number, emoji: d.emoji, color: d.color };
     if (!id || boss) body.name = d.name;
-    if (boss) Object.assign(body, { position: d.position, ...(d.startOvr !== undefined ? { startOvr: Number(d.startOvr) } : {}) });
+    if (boss) Object.assign(body, { position: d.position, heightIn: heightFrom(d.heightFt, d.heightIn), weightLb: d.weightLb, ...(d.startOvr !== undefined ? { startOvr: Number(d.startOvr) } : {}) });
     if (id && boss) body.active = !d.retired;
     const saved = await run(() => api(id ? 'PATCH' : 'POST', id ? `/api/players/${id}` : '/api/players', body), id ? 'Saved' : `${d.nickname || d.name} joined the HFL 🏈`);
     if (!saved) return;

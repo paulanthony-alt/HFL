@@ -162,8 +162,8 @@ test('Madden OVR: weights per position, each adds up to 1', () => {
     assert.equal(Math.round(Object.values(w).reduce((a, b) => a + b, 0) * 1000), 1000, pos);
     for (const k of Object.keys(w)) assert.ok(E.ATTR_KEYS.includes(k), `${pos}.${k}`);
   }
-  assert.equal(E.ATTRS.length, 16);
-  assert.deepEqual(E.ATTR_KEYS, ['spd', 'acc', 'cth', 'rte', 'rls', 'thp', 'tha', 'str', 'mcv', 'tak', 'sta', 'bcv', 'btk', 'cod', 'jkm', 'car']);
+  assert.equal(E.ATTRS.length, 17);
+  assert.deepEqual(E.ATTR_KEYS, ['spd', 'acc', 'cth', 'rte', 'rls', 'thp', 'tha', 'str', 'mcv', 'tak', 'sta', 'bcv', 'btk', 'cod', 'jkm', 'car', 'rac']);
 });
 
 test('Madden OVR: same player rates differently by position', () => {
