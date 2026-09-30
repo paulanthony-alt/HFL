@@ -65,3 +65,24 @@ test('form: 🔥 after TDs in 3 straight games, ❄️ after a cold stretch', ()
   games.push(game('g4', '2026-09-04', [ev('pass_td', 'qb', 'wb', 'B')]));
   assert.equal(formOf(db, E.computeLeague(db)).wb.cold, 0);
 });
+
+test('scouting: picks 2–3 strengths and weaknesses from the ratings', async () => {
+  const { teamScouting } = await import('../public/insights.js');
+  const base = { spd: 70, acc: 70, cth: 70, rte: 70, rls: 70, thp: 70, tha: 70, str: 70, mcv: 70, tak: 70, sta: 70, bcv: 70, btk: 70, cod: 70, jkm: 70, car: 70 };
+  const R = {
+    a1: { ...base, spd: 95, acc: 94, cth: 55 }, a2: { ...base, spd: 92, acc: 90, cth: 58, mcv: 90 },
+    b1: { ...base, cth: 92, tak: 50, str: 55 }, b2: { ...base, cth: 90, tha: 92, thp: 90, tak: 52 },
+  };
+  const at = (id) => R[id];
+  const A = teamScouting(['a1', 'a2'], ['b1', 'b2'], Object.keys(R), at);
+  const B = teamScouting(['b1', 'b2'], ['a1', 'a2'], Object.keys(R), at);
+  for (const r of [A, B]) {
+    assert.ok(r.strengths.length >= 2 && r.strengths.length <= 3);
+    assert.ok(r.weaknesses.length >= 2 && r.weaknesses.length <= 3);
+    assert.ok(!r.strengths.some((x) => r.weaknesses.some((y) => y.key === x.key)), 'never both');
+  }
+  assert.equal(A.strengths[0].key, 'speed');
+  assert.ok(A.weaknesses.some((x) => x.key === 'hands'));
+  assert.ok(B.strengths.some((x) => x.key === 'hands'));
+  assert.ok(B.weaknesses.some((x) => x.key === 'rush'));
+});

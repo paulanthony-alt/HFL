@@ -3,7 +3,7 @@ import { ROSTER_VERSION, rsvpOpen, commissionerIds, localToday } from './league.
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
-import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf } from './insights.js';
+import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
 
 // ---------------------------------------------------------------------------
 // State + helpers
@@ -594,7 +594,28 @@ function teamColumns(g, { editable = false, info = null } = {}) {
   return `
     <div class="teams">${col('A')}${col('B')}</div>
     <div class="wp"><span style="width:${pct(wp)}"></span></div>
-    <div class="wp-labels"><span>${pct(wp)}</span><span class="muted small">win odds</span><span>${pct(1 - wp)}</span></div>`;
+    <div class="wp-labels"><span>${pct(wp)}</span><span class="muted small">win odds</span><span>${pct(1 - wp)}</span></div>
+    ${scoutingReport(g)}`;
+}
+
+// Strengths & weaknesses for each side, from everyone's ratings.
+function scoutingReport(g) {
+  const A = g.teams?.A || [], B = g.teams?.B || [];
+  if (!A.length || !B.length) return '';
+  const league = activePlayers().map((p) => p.id);
+  const side = (k, mine, theirs) => {
+    const r = teamScouting(mine, theirs, league, attrsOf);
+    const item = (x, good) => `<li class="${good ? 'up' : 'down'}"><span>${x.emoji}</span><b>${h(x.label)}</b></li>`;
+    return `
+      <div class="scout-team t-${k}">
+        <div class="scout-name">${h(teamName(g, k))}</div>
+        <div class="chips-label">Strengths</div>
+        <ul class="scout-list">${r.strengths.map((x) => item(x, true)).join('') || '<li class="none">Nothing stands out</li>'}</ul>
+        <div class="chips-label">Weaknesses</div>
+        <ul class="scout-list">${r.weaknesses.map((x) => item(x, false)).join('') || '<li class="none">No holes</li>'}</ul>
+      </div>`;
+  };
+  return `<div class="scout"><div class="scout-grid">${side('A', A, B)}${side('B', B, A)}</div></div>`;
 }
 
 function teamsSection(g) {
@@ -639,8 +660,14 @@ function swingText(g, swing) {
   return `${describeEvent(swing.ev)} <span class="swing-to t-${side}">${pts}% swing to ${h(teamName(g, side))}</span>`;
 }
 
+function teamColumnsOdds(g) {
+  const wp = gameInfo(g).winProbA ?? 0.5;
+  return `<div class="wp"><span style="width:${pct(wp)}"></span></div>
+    <div class="wp-labels"><span>${pct(wp)}</span><span class="muted small">win odds</span><span>${pct(1 - wp)}</span></div>`;
+}
+
 function momentumChart(g) {
-  if (!g.events.length) return '';
+  if (!g.events.length) return `<section class="card momentum"><h3>Win probability</h3>${teamColumnsOdds(g)}${scoutingReport(g)}</section>`;
   const { series, swing } = momentumData(g);
   const W = 600, H = 150, pad = 6;
   const last = series[series.length - 1];
@@ -674,6 +701,7 @@ function momentumChart(g) {
         ${scores.map((p) => `<i class="wp-dot t-${p.ev.team}" style="left:${(x(p.t) / W * 100).toFixed(2)}%;top:${(y(p.wp) / H * 100).toFixed(2)}%" title="${h(E.EVENT_TYPES[p.ev.type].label)}"></i>`).join('')}
       </div>
       ${swing ? `<div class="swing"><span class="kicker gold">Biggest momentum swing</span><div class="swing-body">${swingText(g, swing)}</div></div>` : ''}
+      ${scoutingReport(g)}
     </section>`;
 }
 

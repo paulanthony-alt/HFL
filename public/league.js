@@ -302,7 +302,7 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   });
 
   // Manual ratings, Madden style: { ratings: { playerId: { attrs: { spd: 88, ... }, position } } }.
-  // (A plain number still works and sets all nine ratings to it.) Stored as dated edits so
+  // (A plain number still works and sets every rating to it.) Stored as dated edits so
   // games played afterwards keep moving the ratings from the new numbers.
   on('POST', '/api/ratings', (db, b) => {
     requireCommish(db, b, 'change ratings');

@@ -1182,3 +1182,17 @@ details.rate-row[open] > summary { margin-bottom: 10px; }
   .tc-back .tc-attrs .ab:nth-child(n+6) { display: none; }
   .tc-acc span:nth-child(n+3) { display: none; }
 }
+
+/* ---------- scouting report: team strengths & weaknesses ---------- */
+.scout { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.scout-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.scout-name { font: 900 18px/1 var(--display); text-transform: uppercase; color: currentColor; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scout .chips-label { margin-top: 8px; }
+.scout-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 5px; }
+.scout-list li { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 8px; background: var(--bg-1); border: 1px solid var(--line); color: var(--text); font-size: 13.5px; line-height: 1.15; }
+.scout-list li b { font-weight: 600; }
+.scout-list li.up { border-left: 3px solid var(--turf); }
+.scout-list li.down { border-left: 3px solid var(--red); }
+.scout-list li span { flex: none; }
+@media (max-width: 360px) { .scout-grid { grid-template-columns: 1fr; } }
+.scout-list li.none { color: var(--muted); }

@@ -119,3 +119,55 @@ export function formOf(db, league) {
   }
   return form;
 }
+
+// ---------------------------------------------------------------------------
+// Scouting report: 2–3 strengths and weaknesses per team, from the players' ratings,
+// measured against the rest of the league and the team across the field.
+
+export const SCOUT_CATEGORIES = [
+  { key: 'speed', attrs: ['spd', 'acc'], good: ['⚡', 'Speed to burn'], bad: ['🐢', 'Slow-footed'] },
+  { key: 'hands', attrs: ['cth'], good: ['🙌', 'Sure hands'], bad: ['🧈', 'Butterfingers risk'] },
+  { key: 'routes', attrs: ['rte', 'rls'], good: ['✂️', 'Crisp route runners'], bad: ['🌀', "Can't get open"] },
+  { key: 'arm', qb: true, good: ['🎯', 'Gunslinger at QB'], bad: ['🥴', 'Shaky at QB'] },
+  { key: 'coverage', attrs: ['mcv'], good: ['🔒', 'Lockdown coverage'], bad: ['🚪', 'Leaky secondary'] },
+  { key: 'rush', attrs: ['tak', 'str'], good: ['💥', 'Nasty pass rush'], bad: ['🪶', 'Soft up front'] },
+  { key: 'elusive', attrs: ['bcv', 'btk', 'cod', 'jkm'], good: ['🕺', 'Slippery after the catch'], bad: ['🧱', 'Go down easy'] },
+  { key: 'stamina', attrs: ['sta'], good: ['🔋', 'Fresh legs all game'], bad: ['🪫', 'Fade late'] },
+];
+
+const catValue = (cat, ids, attrsOf) => {
+  if (!ids.length) return 0;
+  // passing: the team's best arm, since one guy throws it
+  if (cat.qb) return Math.max(...ids.map((id) => { const a = attrsOf(id); return a.tha * 0.6 + a.thp * 0.4; }));
+  return ids.reduce((t, id) => t + cat.attrs.reduce((s, k) => s + attrsOf(id)[k], 0) / cat.attrs.length, 0) / ids.length;
+};
+
+// What a typical team's best arm looks like: around the league's 80th-percentile passer.
+const typicalQB = (ids, attrsOf) => {
+  const v = ids.map((id) => { const a = attrsOf(id); return a.tha * 0.6 + a.thp * 0.4; }).sort((x, y) => x - y);
+  return v.length ? v[Math.min(v.length - 1, Math.floor(v.length * 0.8))] : 70;
+};
+
+// { strengths: [{ key, emoji, label, value, edge }], weaknesses: [...] }
+export function teamScouting(ids, oppIds, leagueIds, attrsOf) {
+  const rows = SCOUT_CATEGORIES.map((cat) => {
+    const value = catValue(cat, ids, attrsOf);
+    const vsLeague = value - (cat.qb ? typicalQB(leagueIds, attrsOf) : catValue(cat, leagueIds, attrsOf));
+    const vsOpp = value - catValue(cat, oppIds, attrsOf);
+    return { cat, value, score: vsLeague + vsOpp * 0.75, edge: vsOpp };
+  });
+  // Grade each team against its own profile so every team has something it's best and
+  // worst at, even when one side is better at nearly everything.
+  const mean = rows.reduce((t, r) => t + r.score, 0) / rows.length;
+  for (const r of rows) r.score -= mean;
+  rows.sort((a, b) => b.score - a.score);
+  const pick = (list, good) => {
+    const clear = list.filter((r) => (good ? r.score > 0.5 : r.score < -0.5)).slice(0, 3);
+    const lean = list.filter((r) => (good ? r.score > 0 : r.score < 0)).slice(0, 2);
+    return (clear.length >= 2 ? clear : lean).map((r) => ({
+      key: r.cat.key, emoji: (good ? r.cat.good : r.cat.bad)[0], label: (good ? r.cat.good : r.cat.bad)[1],
+      value: Math.round(r.value), edge: Math.round(r.edge),
+    }));
+  };
+  return { strengths: pick(rows, true), weaknesses: pick([...rows].reverse(), false) };
+}
