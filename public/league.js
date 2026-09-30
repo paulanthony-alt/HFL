@@ -3,6 +3,7 @@
 import { EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
 import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
+import { applyClock, CLOCK_ACTIONS } from './clock.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
@@ -435,6 +436,16 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     const g = game(db, id);
     if (g.status !== 'final') throw bad('game is not final');
     g.status = 'live';
+    return g;
+  });
+  // Optional game clock (see clock.js). Only game.clock changes; plays are untouched.
+  on('POST', '/api/games/:id/clock', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'live') throw bad('the clock only runs during a live game');
+    const action = oneOf(b.action, CLOCK_ACTIONS, 'clock action');
+    let next;
+    try { next = applyClock(g.clock || null, action, now()); } catch (e) { throw bad(e.message); }
+    if (next) g.clock = next; else delete g.clock;
     return g;
   });
   on('POST', '/api/games/:id/events', (db, b, { id }) => {
