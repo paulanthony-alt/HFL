@@ -17,12 +17,20 @@ The official app of the HFL pickup football league. Works on any phone browser �
 | **Hot & cold** | Score or throw a TD in 3 straight games and your card catches fire 🔥. Two or more straight games with a drop or a pick and no TDs and it frosts over ❄️. It lasts until the streak ends. |
 | **Live game tracker** | One guy logs plays on his phone: TD pass, TD run, catch, incompletion, drop, INT, pick six and sack. Every TD is worth 6. Two taps per play (what happened → who). Score updates on everyone's phone instantly. Mistakes can be deleted. |
 | **Voice logging** | Tap **🎤 Log by voice** once and just talk: "Kellen to Max, touchdown", "Lucas touchdown run", "Boden picks off Kellen", "Ben sacks Kellen", "Dane dropped it". Each play is logged the moment it's heard (the phone buzzes), with an Undo button for the last one. It keeps listening until you tap Stop or leave the game. Works in Chrome and Safari; the rest of the logger still works without it. |
+| **AR Scoreboard (Cast / Film)** | A second phone on a tripod films the game with a TV-style scoreboard drawn on the picture: team names, colors and score bottom-left, quarter and game clock top-right, a last-play ticker ("TD · Don → Robert") and a big banner for 2 seconds on every touchdown. Tap REC and the scoreboard is baked into the video (with sound), then Save / Share it or download it. Videos stay on the phone and are never uploaded. The camera phone only watches the live game; it never logs plays. The optional **game clock** (⏱ on the logger: start, pause, next quarter) shows on every phone at the same time. |
 | **HFL Wrapped** | A Spotify-Wrapped-style story for every player's season: record and ride-or-die teammate, your biggest numbers and where they rank, favorite target (or QB), your nemesis, your best play (the one that swung the win probability most), best game, clutch and heaters, ratings glow-up, hardware, and a roast. Ends on a summary card you can share as a story-sized image. It's under Stats → 🎁 Wrapped anytime ("so far"), on every player page, and a banner announces it when a season ends. |
 | **Leaderboards** | MVP race, TDs, QB rating, win-loss record, receiving (including drops 🧈), defense, and ratings. By season or career. |
 | **Player cards** | Trading-card profiles with OVR, position, nickname, season stats and badges. Bronze, silver and gold tiers, plus holographic cards for 90+ players. Uploaded photos are cropped to the card automatically, centered on the face (using the phone's face detection when it has it), with a preview before saving. Tap to flip for the six ratings that matter most at his position, season stats and accolades (all sixteen ratings are on his player page). |
 | **Playbook** | Draw routes with your finger on a 5v5 field (QB + 4 receivers, no center). Wobbly lines get cleaned up into sharp cuts. Supports pre-snap motion, blocks, preset formations and defenses. Hit ▶ to watch the play run, and share it to the group chat as an image. |
 | **Trash-talk wall + MVP vote** | Post smack, react 🔥😂💀🧂🗑️, and use 🎲 Roast to get a burn written from someone's real stats. Everyone who played votes for MVP (no voting for yourself). |
 | **Hall of Fame** | Best plays, dumbest moments and worst drops, with photos and upvotes. Tap 🏛️ on any logged play to enshrine it. |
+
+### How to use the AR Scoreboard
+
+1. **Logger phone:** open the live game and log plays like always. Tap **⏱ Start game clock** if you want a clock (⋯ has Next quarter, Reset and Turn clock off).
+2. **Tripod phone:** open the same live game and tap **📹 Cast / Film** (or go to `#/cast`). Allow the camera, turn the phone sideways, and frame the field. The score, clock and plays update by themselves.
+3. Tap the red **REC** button to record and tap it again to stop. Then tap **Save / Share** (on iPhone, pick **Save Video** to put it in Photos) or **Download**. Save before closing: the video only lives on that phone.
+4. Plug the tripod phone in for long games. Recordings stop at 10 minutes so the phone doesn't run out of memory (tap REC again to keep going). If the screen might lock, turn off Auto-Lock.
 
 ## Putting it online (Firebase)
 
@@ -62,6 +70,7 @@ Data is saved to `data/db.json` (photos in `data/uploads/`). Set a crew passcode
 - `public/backend-firebase.js`: Firebase mode. Live Firestore listeners, and each change runs `league.js` on a draft then writes the changed documents in one transaction, checking each document's revision so simultaneous edits from different phones never overwrite each other.
 - `public/app.js`: the app itself (vanilla JS, hash routing, no build step). Picks Firebase when `/__/firebase/init.json` exists (Firebase Hosting), otherwise the local server.
 - `public/crop.js`: works out the card-shaped crop for an uploaded photo.
+- `public/cast.js`: the AR Scoreboard camera screen (camera → canvas + scoreboard → MediaRecorder, wake lock). `public/clock.js`: the optional game clock (`game.clock = { startedAt, pausedAt, quarter }`).
 - `public/voice.js`: turns a spoken sentence into a play (names, play words, who did what).
 - `public/wrapped.js`: builds each player's season Wrapped and its share image.
 - `public/insights.js`: win probability, momentum swings, clutch scoring and hot/cold form.
