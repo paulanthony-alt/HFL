@@ -303,7 +303,7 @@ test('PIN lock: players edit only their own profile; ratings and positions are c
   const kellen = (await call('POST', '/api/players', { name: 'Kellen', startOvr: 99, position: 'QB' })).result;
   assert.equal(kellen.startOvr, 70, 'only the commissioner sets starting ratings');
   assert.equal(kellen.position, 'ATH');
-  const max = (await call('POST', '/api/players', { name: 'Max' })).result;
+  const max = (await call('POST', '/api/players', { name: 'Liam' })).result; // an ordinary player
   const K = { as: kellen.id, pinHash: pinHash(kellen.id, '1111') };
   const M = { as: max.id, pinHash: pinHash(max.id, '2222') };
 
@@ -315,7 +315,7 @@ test('PIN lock: players edit only their own profile; ratings and positions are c
   const own = await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'K-Train', number: 23, _auth: K });
   assert.equal(own.status, 200);
   assert.equal(own.result.nickname, 'K-Train');
-  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'Loser', _auth: M })).status, 403, "Max can't rename Kellen");
+  assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'Loser', _auth: M })).status, 403, "Liam can't rename Kellen");
   assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { nickname: 'x', _auth: { as: kellen.id, pinHash: pinHash(kellen.id, '9999') } })).status, 403, 'wrong PIN');
   assert.equal((await call('PATCH', `/api/players/${kellen.id}`, { position: 'QB', _auth: K })).status, 403, 'position is a ratings thing');
   assert.equal((await call('POST', '/api/ratings', { ratings: { [kellen.id]: 99 }, _auth: K })).status, 403, "can't rate yourself");
@@ -329,6 +329,20 @@ test('PIN lock: players edit only their own profile; ratings and positions are c
   const after = (await call('GET', '/api/state')).db.players.find((p) => p.id === kellen.id);
   assert.equal(after.pinHash, null, 'PIN reset, Kellen can claim again');
   assert.equal((await call('POST', '/api/import', { db: { players: [], games: [], posts: [], plays: [], fame: [] } })).status, 403, 'restoring a backup is commissioner-only');
+});
+
+test('Max and Henry are league admins too', async () => {
+  const henry = (await call('POST', '/api/players', asPaul({ name: 'Henry' }))).result;
+  const max = (await call('POST', '/api/players', asPaul({ name: 'Max' }))).result;
+  const evan = (await call('POST', '/api/players', asPaul({ name: 'Evan' }))).result;
+  const H = { as: henry.id, pinHash: pinHash(henry.id, '3333') };
+  const X = { as: max.id, pinHash: pinHash(max.id, '4444') };
+  const E = { as: evan.id, pinHash: pinHash(evan.id, '5555') };
+  for (const [p, a] of [[henry, H], [max, X], [evan, E]]) await call('POST', `/api/players/${p.id}/pin`, { pinHash: a.pinHash });
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [evan.id]: 88 }, _auth: H })).status, 200, 'Henry can rate');
+  assert.equal((await call('PATCH', `/api/players/${evan.id}`, { position: 'DB', _auth: X })).status, 200, 'Max can set positions');
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [max.id]: 99 }, _auth: E })).status, 403, 'Evan still cannot');
+  assert.equal((await call('POST', '/api/ratings', { ratings: { [henry.id]: 80 } , _auth: { as: henry.id, pinHash: pinHash(henry.id, '0000') } })).status, 403, 'needs the right PIN');
 });
 
 test("games can't start before game day, and an early start can be undone", async () => {

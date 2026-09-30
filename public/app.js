@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION, rsvpOpen, commissionerId, localToday } from './league.js';
+import { ROSTER_VERSION, rsvpOpen, commissionerIds, localToday } from './league.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
@@ -41,8 +41,8 @@ const hasPin = (id) => !!S.db.players.find((p) => p.id === id)?.pinHash;
 const pinOk = (id) => { const p = S.db.players.find((x) => x.id === id); return !!p?.pinHash && storedPin(id) === p.pinHash; };
 // "Me" = the player picked on this phone, as long as it's unlocked with his PIN (or he hasn't set one yet).
 const me = () => (S.me && S.db.players.some((p) => p.id === S.me) && (!hasPin(S.me) || pinOk(S.me)) ? S.me : null);
-const commish = () => commissionerId(S.db);
-const iAmCommish = () => !!me() && me() === commish() && pinOk(me());
+const isAdmin = (id) => !!id && commissionerIds(S.db).includes(id);
+const iAmCommish = () => isAdmin(me()) && pinOk(me());
 const canEditProfile = (id) => iAmCommish() || (me() === id && pinOk(id));
 async function hashPin(id, pin) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`hfl|${id}|${pin}`));
@@ -1721,10 +1721,10 @@ function viewKey() {
 function viewRatings() {
   const list = activePlayers().sort((a, b) => ovr(b.id) - ovr(a.id));
   if (!iAmCommish()) {
-    const boss = commish();
+    const boss = isAdmin(S.me) ? S.me : null;
     return `
       <a class="back" href="#/settings">‹ Settings</a>
-      <section class="card">${empty({ art: 'chart', title: 'Ratings are locked', text: `The app updates everyone's ratings after every game.${boss && S.me === boss ? ' Enter your PIN to unlock.' : ''}`, cta: boss && (me() === boss || S.me === boss) ? `<a class="btn hot" href="#/unlock/${boss}">Enter PIN</a>` : '<a class="btn ghost" href="#/stats">See everyone\'s ratings</a>' })}</section>`;
+      <section class="card">${empty({ art: 'chart', title: 'Ratings are locked', text: `The app updates everyone's ratings after every game.${boss ? ' Enter your PIN to unlock.' : ''}`, cta: boss ? `<a class="btn hot" href="#/unlock/${boss}">Enter PIN</a>` : '<a class="btn ghost" href="#/stats">See everyone\'s ratings</a>' })}</section>`;
   }
   return `
     <a class="back" href="#/settings">‹ Settings</a>

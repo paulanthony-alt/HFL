@@ -25,17 +25,21 @@ const forbidden = (msg) => new HttpError(403, msg);
 
 // ---------------------------------------------------------------------------
 // Who's asking. Every request can carry _auth: { as: playerId, pinHash }, where pinHash is
-// sha256("hfl|<playerId>|<PIN>") worked out on the phone. The commissioner is whoever
-// settings.commissionerId names, else the player called Paul.
-export const commissionerId = (db) =>
-  db.settings?.commissionerId || db.players.find((p) => String(p.name || '').trim().toLowerCase() === 'paul')?.id || null;
+// sha256("hfl|<playerId>|<PIN>") worked out on the phone. The league admins are whoever
+// settings.commissionerIds names, plus the players called Paul, Max and Henry.
+export const ADMIN_NAMES = ['paul', 'max', 'henry'];
+export function commissionerIds(db) {
+  const named = db.players.filter((p) => ADMIN_NAMES.includes(String(p.name || '').trim().toLowerCase())).map((p) => p.id);
+  return [...new Set([...(db.settings?.commissionerIds || []), db.settings?.commissionerId, ...named].filter(Boolean))];
+}
+export const commissionerId = (db) => commissionerIds(db)[0] || null;
 export function whoIsAsking(db, b) {
   const a = b?._auth;
   if (!a?.as || !a?.pinHash) return null;
   const p = db.players.find((x) => x.id === a.as);
   return p?.pinHash && p.pinHash === a.pinHash ? p.id : null;
 }
-const isCommish = (db, id) => !!id && id === commissionerId(db);
+const isCommish = (db, id) => !!id && commissionerIds(db).includes(id);
 function requireCommish(db, b, what) {
   if (!isCommish(db, whoIsAsking(db, b))) throw forbidden(`That's locked: you can't ${what}`);
 }
