@@ -1272,3 +1272,6 @@ details.rate-row[open] > summary { margin-bottom: 10px; }
 .t-good { color: var(--turf); }
 .t-bad { color: var(--red); }
 @media (prefers-reduced-motion: reduce) { .wrapped::before, .wr-body { animation: none; } .wr-bars span.on i { animation: none; width: 50%; } }
+.crop-preview { display: flex; align-items: center; gap: 12px; }
+.crop-preview[hidden] { display: none; }
+.crop-box { width: 160px; aspect-ratio: 1.6; flex: none; border-radius: 10px; background: var(--bg-1) center / cover no-repeat; border: 1px solid var(--line-2); }

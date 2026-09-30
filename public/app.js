@@ -4,6 +4,7 @@ import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
 import { parsePlay, VOICE_EXAMPLES } from './voice.js';
+import { cardCrop } from './crop.js';
 import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wrapped.js';
 import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
 
@@ -1543,9 +1544,10 @@ function viewEditPlayer(id) {
         <p class="muted small">${!boss ? '🔒 Ratings and position are locked. The app updates them after every game.' : p ? 'His sixteen Madden-style ratings (speed, catching, throwing and the rest) are set in <a href="#/ratings">Rate players</a>.' : 'Sets all of his ratings to start with; fine-tune them later in Rate players. After that they move with every game he plays. 70 is an average dude.'}</p>
         ${p || boss ? `<div class="photo-field">
           ${p ? avatar(p.id, 'lg') : '<span class="av lg" style="--c:#555">?</span>'}
-          <label class="grow">Card photo <input type="file" name="photo" accept="image/*"></label>
+          <label class="grow">Card photo <input type="file" name="photo" accept="image/*" data-ch="photo-preview"></label>
         </div>
-        <p class="muted small">A shot from the waist up works best. It shows on the card and next to the name everywhere.${p?.photo ? ' <button type="button" class="linkish" data-a="remove-photo" data-p="' + p.id + '">Remove current photo</button>' : ''}</p>` : ''}
+        <div class="crop-preview" hidden><div class="crop-box"></div><span class="muted small">Auto-cropped to fit the card</span></div>
+        <p class="muted small">Any photo works: it gets cropped to the card automatically, centered on the face. It shows on the card and next to the name everywhere.${p?.photo ? ' <button type="button" class="linkish" data-a="remove-photo" data-p="' + p.id + '">Remove current photo</button>' : ''}</p>` : ''}
         ${p && boss ? `<label class="check"><input type="checkbox" name="retired" ${p.active === false ? 'checked' : ''}> Retired (hide from RSVPs and cards, keep his stats)</label>` : ''}
         <button class="btn hot block">${p ? 'Save' : '+ Add to the league'}</button>
       </form>
@@ -1831,6 +1833,32 @@ function viewFameNew(query) {
         <button class="btn hot block">Enshrine it forever</button>
       </form>
     </section>`;
+}
+
+// Card photos: crop to the card's shape around the face (the browser's face detector
+// when it has one, a head-and-shoulders guess otherwise), then shrink.
+async function cardPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('Could not read that image')); img.src = url; });
+    let faces = [];
+    if ('FaceDetector' in window) {
+      try {
+        faces = (await new window.FaceDetector({ fastMode: true, maxDetectedFaces: 4 }).detect(img))
+          .map((f) => ({ x: f.boundingBox.x, y: f.boundingBox.y, w: f.boundingBox.width, h: f.boundingBox.height }));
+      } catch { /* no face detection here; fall back to the guess */ }
+    }
+    const c = cardCrop(img.naturalWidth, img.naturalHeight, { faces });
+    const scale = Math.min(1, 960 / c.w);
+    const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(c.w * scale), height: Math.round(c.h * scale) });
+    canvas.getContext('2d').drawImage(img, c.x, c.y, c.w, c.h, 0, 0, canvas.width, canvas.height);
+    let quality = 0.85, dataUrl = canvas.toDataURL('image/jpeg', quality);
+    while (dataUrl.length * 0.75 > 600 * 1024 && quality > 0.35) dataUrl = canvas.toDataURL('image/jpeg', (quality -= 0.12));
+    return dataUrl;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 async function resizeImage(file, max = 1200) {
@@ -2182,6 +2210,16 @@ const CHANGE = {
     refreshRateRow(row);
   },
   season: (el) => { S.season = el.value; render(); },
+  'photo-preview': async (el) => {
+    const box = el.closest('form')?.querySelector('.crop-preview');
+    const file = el.files?.[0];
+    if (!box) return;
+    if (!file) { box.hidden = true; return; }
+    try {
+      box.querySelector('.crop-box').style.backgroundImage = `url('${await cardPhoto(file)}')`;
+      box.hidden = false;
+    } catch (e) { toast(e.message, true); }
+  },
   'wrapped-season': (el) => { location.hash = `#/wrapped?s=${encodeURIComponent(el.value)}`; },
   'range-out': (el) => { const out = el.form.querySelector(`[data-out="${el.name}"]`); if (out) out.textContent = el.value; },
   import: (el) => {
@@ -2269,7 +2307,7 @@ const FORMS = {
     const photo = form.querySelector('input[name=photo]')?.files?.[0];
     if (photo && photo.size) {
       try {
-        const image = await resizeImage(photo, 900);
+        const image = await cardPhoto(photo);
         await run(() => api('POST', `/api/players/${saved.id}/photo`, { image }), '📸 Card photo saved');
       } catch (e) {
         toast(e.message, true);
