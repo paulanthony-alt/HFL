@@ -23,6 +23,7 @@ The official app of the HFL pickup football league. Works on any phone browser �
 | **Player cards** | Trading-card profiles with OVR, position, nickname, season stats and badges. Bronze, silver and gold tiers, plus holographic cards for 90+ players. Uploaded photos are cropped to the card automatically, centered on the face (using the phone's face detection when it has it), with a preview before saving. Tap to flip for the six ratings that matter most at his position, season stats and accolades (all sixteen ratings are on his player page). |
 | **Playbook** | Draw routes with your finger on a 5v5 field (QB + 4 receivers, no center). Wobbly lines get cleaned up into sharp cuts. Supports pre-snap motion, blocks, preset formations and defenses. Hit ▶ to watch the play run, and share it to the group chat as an image. |
 | **Trash-talk wall + MVP vote** | Post smack, react 🔥😂💀🧂🗑️, and use 🎲 Roast to get a burn written from someone's real stats. Everyone who played votes for MVP (no voting for yourself). |
+| **NFL comps** | Every player page says who he'd be in the NFL ("Plays like Tyreek Hill, 87% match") plus two runner-ups and why. It matches the shape of his ratings (what he's best at compared with the rest of his game), his position and his height/weight against 40+ NFL players' styles, so a guy rated in the 60s can still comp to a star. Players whose ratings are all the same get a note to rate them first. |
 | **Rules** | The Rules tab holds the league's rules, numbered in order. League admins add, edit, reorder and delete them; everyone else can read them. |
 | **Hall of Fame** | Best plays, dumbest moments and worst drops, with photos and upvotes. Tap 🏛️ on any logged play to enshrine it. |
 
@@ -70,6 +71,7 @@ Data is saved to `data/db.json` (photos in `data/uploads/`). Set a crew passcode
 - `public/league.js`: every change the app can make, with validation. The same code runs on the local server and, on Firebase, in the browser.
 - `public/backend-firebase.js`: Firebase mode. Live Firestore listeners, and each change runs `league.js` on a draft then writes the changed documents in one transaction, checking each document's revision so simultaneous edits from different phones never overwrite each other.
 - `public/app.js`: the app itself (vanilla JS, hash routing, no build step). Picks Firebase when `/__/firebase/init.json` exists (Firebase Hosting), otherwise the local server.
+- `public/nfl.js`: the NFL comp profiles and matching.
 - `public/crop.js`: works out the card-shaped crop for an uploaded photo.
 - `public/cast.js`: the AR Scoreboard camera screen (camera → canvas + scoreboard → MediaRecorder, wake lock). `public/clock.js`: the optional game clock (`game.clock = { startedAt, pausedAt, quarter }`).
 - `public/voice.js`: turns a spoken sentence into a play (names, play words, who did what).

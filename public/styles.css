@@ -1351,3 +1351,12 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .rule-tools { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .rule-meta { margin-top: 6px; font-size: 12px; color: var(--muted); }
 .rule-form textarea { min-height: 110px; }
+
+/* ---------- NFL comp ---------- */
+.nfl-best { display: flex; align-items: center; gap: 14px; margin: 6px 0 4px; }
+.nfl-match { flex: none; width: 76px; height: 76px; border-radius: 18px; display: grid; place-content: center; text-align: center; background: linear-gradient(160deg, #1d3a8a, #0b1633); border: 1px solid rgba(120, 160, 255, 0.45); box-shadow: 0 10px 24px -12px rgba(60, 110, 255, 0.7); }
+.nfl-match b { font: 900 30px/1 var(--display); }
+.nfl-match small { font: 700 10px/1 var(--label); letter-spacing: 0.18em; text-transform: uppercase; color: #b9c8ff; }
+.nfl-name { font: 900 32px/0.95 var(--display); text-transform: uppercase; margin: 4px 0; }
+.nfl-why { margin: 8px 0 0; color: var(--text-2); }
+.nfl .pchip b { color: var(--gold); margin-left: 4px; }

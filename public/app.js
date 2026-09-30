@@ -5,6 +5,7 @@ import { computeAwards, DESIGNS, cardDesign } from './awards.js';
 import { buildRecap, recapToPngBlob } from './recap.js';
 import { parsePlay, VOICE_EXAMPLES } from './voice.js';
 import { cardCrop } from './crop.js';
+import { nflComps } from './nfl.js';
 import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wrapped.js';
 import { CastView } from './cast.js';
 import { clockElapsed, formatClock, quarterLabel, isRunning } from './clock.js';
@@ -1313,6 +1314,33 @@ function ratingsSection(id, log) {
     </section>`;
 }
 
+// "Who would he be in the NFL?" (see nfl.js)
+function nflSection(id) {
+  const p = P(id);
+  const { flat, comps } = nflComps(attrsOf(id), { position: p.position, heightIn: p.heightIn, weightLb: p.weightLb });
+  if (flat) {
+    return `
+      <section class="card nfl">
+        <h3>NFL comp</h3>
+        <p class="muted small">His ratings are all about the same, so there's no style to match yet. It shows up once he's rated in Rate players or has a few games in.</p>
+      </section>`;
+  }
+  const [best, ...rest] = comps;
+  const why = (c) => c.shared.map((k) => attrMeta[k].label.toLowerCase()).join(' and ');
+  return `
+    <section class="card nfl">
+      <div class="row-between"><h3>NFL comp</h3><span class="muted small">if he were in the league</span></div>
+      <div class="nfl-best">
+        <span class="nfl-match"><b>${best.match}%</b><small>match</small></span>
+        <div class="grow"><div class="kicker gold">Plays like</div><div class="nfl-name">${h(best.name)}</div><div class="muted small">${h(best.pos)} · ${h(best.style)}</div></div>
+      </div>
+      ${why(best) ? `<p class="small nfl-why">Why: his ${h(why(best))} ${best.shared.length > 1 ? 'stand' : 'stands'} out, same as ${h(best.name.split(' ').at(-1))}'s.</p>` : ''}
+      <div class="chips-label">Also reminds us of</div>
+      <div class="chips">${rest.map((c) => `<span class="pchip">${h(c.name)} <b>${c.match}%</b></span>`).join('')}</div>
+      <p class="muted small">Based on what he's best at compared with the rest of his game${p.heightIn || p.weightLb ? ', plus his height and weight' : ''}, not how high his ratings are. Changes as his ratings do.</p>
+    </section>`;
+}
+
 function careerSection(id) {
   const c = careerOf(id);
   if (!c.gp) return '';
@@ -1594,6 +1622,7 @@ function viewCard(id) {
     })()}
 
     ${ratingsSection(id, log)}
+    ${nflSection(id)}
     ${progressionSection(id)}
     ${awardsSection(id)}
     ${designSection(id)}
