@@ -810,7 +810,7 @@ button.tp:hover { background: rgba(255, 255, 255, 0.03); }
 .av.has-photo { color: transparent; background-color: var(--c); background-size: cover; background-position: center 12%; }
 .tc-art.has-photo {
   background-color: color-mix(in srgb, var(--c) 30%, #000);
-  background-size: cover; background-position: center 14%; background-repeat: no-repeat;
+  background-size: cover; background-position: center 25%; background-repeat: no-repeat;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 .tc-art.has-photo::after { /* fade the photo into the card */
