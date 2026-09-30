@@ -1360,3 +1360,16 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .nfl-name { font: 900 32px/0.95 var(--display); text-transform: uppercase; margin: 4px 0; }
 .nfl-why { margin: 8px 0 0; color: var(--text-2); }
 .nfl .pchip b { color: var(--gold); margin-left: 4px; }
+
+/* ---------- team playbooks ---------- */
+.team-books { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.team-book { display: grid; gap: 6px; padding: 14px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line-2); color: var(--text); text-decoration: none; box-shadow: inset 4px 0 0 var(--tc, var(--teamA)); }
+.team-book.team-B { --tc: var(--teamB); }
+.team-book.open { border-color: color-mix(in srgb, var(--tc, var(--teamA)) 55%, transparent); }
+.tb-name { font: 900 26px/0.95 var(--display); text-transform: uppercase; color: var(--tc, var(--teamA)); }
+.tb-cap { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; }
+.tb-cap small { font: 700 10px/1 var(--label); letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
+.tb-count { color: var(--muted); font-size: 13px; }
+.tb-count b { color: var(--text); font: 900 20px/1 var(--display); }
+.tb-status { font: 700 13px/1.2 var(--label); letter-spacing: 0.04em; color: var(--text-2); }
+.copy-row { padding: 8px 0; border-bottom: 1px solid var(--line); }

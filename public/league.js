@@ -4,6 +4,7 @@ import { EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, b
 import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
 import { applyClock, CLOCK_ACTIONS } from './clock.js';
+import { sha256hex } from './sha256.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
@@ -119,7 +120,29 @@ function cleanPlayer(body, existing = {}) {
   return p;
 }
 
-function cleanPlay(body) {
+// Team captain: the highest-rated player on that side of that game (ties: alphabetical).
+export function teamCaptain(db, g, side, league = computeLeague(db)) {
+  const ids = g?.teams?.[side] || [];
+  const name = (id) => db.players.find((p) => p.id === id)?.name || '';
+  return [...ids].sort((a, b) => (league.ovr[b] ?? 0) - (league.ovr[a] ?? 0) || name(a).localeCompare(name(b)))[0] || null;
+}
+
+// Encrypted team plays (see teamlock.js): the league only checks the shape.
+const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
+function cleanBox(v) {
+  if (!v || typeof v.iv !== 'string' || typeof v.ct !== 'string' || !B64.test(v.iv) || !B64.test(v.ct) || v.iv.length !== 16 || v.ct.length > 200_000) throw bad('bad encrypted play');
+  return { iv: v.iv, ct: v.ct };
+}
+function cleanLock(v) {
+  if (!v || v.v !== 1 || typeof v.salt !== 'string' || !B64.test(v.salt) || v.salt.length > 44 || !/^[0-9a-f]{64}$/.test(v.proofHash || '')) throw bad('bad team lock');
+  return { v: 1, salt: v.salt, iter: num(v.iter, 50_000, 2_000_000, { name: 'rounds', int: true }), proofHash: v.proofHash };
+}
+const teamProofOk = (g, side, b) => {
+  const lock = g.teamLocks?.[side];
+  return !!lock && typeof b?._team === 'string' && b._team.length < 200 && sha256hex(b._team) === lock.proofHash;
+};
+
+export function cleanPlay(body) {
   const players = Array.isArray(body.players) ? body.players : [];
   const routes = Array.isArray(body.routes) ? body.routes : [];
   if (players.length > 14) throw bad('too many players on the field');
@@ -553,19 +576,70 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     db.posts = db.posts.filter((p) => p.id !== id);
   });
 
-  // --- playbook
+  // --- team playbooks (private per game side; see teamlock.js)
+  const canManageTeam = (db, b, g, side) => {
+    const who = whoIsAsking(db, b);
+    return !!who && (isCommish(db, who) || who === teamCaptain(db, g, side));
+  };
+  on('POST', '/api/games/:id/team-lock', (db, b, { id }) => {
+    const g = game(db, id);
+    const side = oneOf(b.side, ['A', 'B'], 'team');
+    if (!g.teams?.[side]?.length) throw bad('pick teams first');
+    if (!canManageTeam(db, b, g, side)) throw forbidden("Only this team's captain or a league admin can set the team PIN");
+    const teamPlays = db.plays.filter((p) => p.gameId === g.id && p.side === side);
+    const current = g.teamLocks?.[side];
+    if (b.reset) {
+      // forgot the PIN: the old plays can't be unlocked anymore, so they go
+      db.plays = db.plays.filter((p) => !(p.gameId === g.id && p.side === side));
+    } else if (current) {
+      // changing the PIN: needs the old one and every play re-locked with the new one
+      if (!teamProofOk(g, side, b)) throw forbidden('Enter the current team PIN first');
+      const boxes = new Map((Array.isArray(b.plays) ? b.plays : []).map((x) => [x?.id, x?.enc]));
+      if (boxes.size !== teamPlays.length || teamPlays.some((p) => !boxes.has(p.id))) throw bad('every team play has to be re-locked with the new PIN');
+      for (const p of teamPlays) { p.enc = cleanBox(boxes.get(p.id)); p.updatedAt = now(); }
+    }
+    g.teamLocks ||= {};
+    if (b.lock === null) delete g.teamLocks[side];
+    else g.teamLocks[side] = { ...cleanLock(b.lock), setBy: whoIsAsking(db, b), setAt: now() };
+    return { ok: true };
+  });
+
+  // --- playbook (league plays are public; plays with a gameId + side are that team's, encrypted)
+  const teamPlayTarget = (db, b) => {
+    const g = game(db, b.gameId);
+    const side = oneOf(b.side, ['A', 'B'], 'team');
+    if (!g.teamLocks?.[side]) throw bad('set a team PIN first');
+    if (!teamProofOk(g, side, b)) throw forbidden('Wrong or missing team PIN');
+    return { g, side };
+  };
   on('POST', '/api/plays', (db, b) => {
+    if (b.gameId) {
+      const { g, side } = teamPlayTarget(db, b);
+      const play = { id: newId(), gameId: g.id, side, enc: cleanBox(b.enc), authorId: b.authorId || null, createdAt: now(), updatedAt: now() };
+      db.plays.push(play);
+      return play;
+    }
     const play = { id: newId(), ...cleanPlay(b), authorId: b.authorId || null, createdAt: now(), updatedAt: now() };
     db.plays.push(play);
     return play;
   });
   on('PUT', '/api/plays/:id', (db, b, { id }) => {
     const play = find(db.plays, id, 'play');
+    if (play.gameId) {
+      teamPlayTarget(db, { ...b, gameId: play.gameId, side: play.side });
+      Object.assign(play, { enc: cleanBox(b.enc), updatedAt: now() });
+      return play;
+    }
+    if (b.gameId || b.enc) throw bad("league plays can't be moved into a team playbook; copy them instead");
     Object.assign(play, cleanPlay(b), { updatedAt: now() });
     return play;
   });
   on('DELETE', '/api/plays/:id', (db, b, { id }) => {
-    find(db.plays, id, 'play');
+    const play = find(db.plays, id, 'play');
+    if (play.gameId) {
+      const g = game(db, play.gameId);
+      if (!teamProofOk(g, play.side, b) && !canManageTeam(db, b, g, play.side)) throw forbidden('Wrong or missing team PIN');
+    }
     db.plays = db.plays.filter((p) => p.id !== id);
   });
 
