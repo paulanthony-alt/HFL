@@ -202,6 +202,13 @@ export async function connectFirebase(config) {
       return images.get(file);
     },
 
+    // Is this phone actually hearing from Firestore right now? (fromCache flips to true
+    // when the connection drops.) Read-only; used by the Cast screen. Returns unsubscribe.
+    watchConnection(cb) {
+      return F.onSnapshot(ref('meta', 'settings'), { includeMetadataChanges: true },
+        (snap) => cb(!snap.metadata.fromCache), () => cb(false));
+    },
+
     exportDb: () => snapshotDb(),
     stop,
   };

@@ -6,6 +6,8 @@ import { buildRecap, recapToPngBlob } from './recap.js';
 import { parsePlay, VOICE_EXAMPLES } from './voice.js';
 import { cardCrop } from './crop.js';
 import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wrapped.js';
+import { CastView } from './cast.js';
+import { clockElapsed, formatClock, quarterLabel, isRunning } from './clock.js';
 import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
 
 // ---------------------------------------------------------------------------
@@ -21,7 +23,14 @@ const S = {
   me: lsGet('hfl.me'), pass: lsGet('hfl.pass'),
   season: null, statTab: 'mvp', fameTab: 'best',
   log: null, editor: null, scores: {}, editorHash: null, after: null, pending: false, lastPath: null,
+  // live-data connection (shown on the Cast screen when it drops)
+  live: { ok: true, message: '' }, cast: null, castHash: null,
 };
+function setLive(ok, message = '') {
+  if (S.live.ok === ok && S.live.message === message) return;
+  S.live = { ok, message };
+  S.cast?.update();
+}
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 const FAME = {
@@ -205,9 +214,10 @@ function connectStream() {
     if (!S.db || version !== S.db.version) loadState(true).catch(() => {});
   });
   es.addEventListener('auth', () => loadState(true).catch(() => {}));
-  es.onopen = () => $('#live-dot').classList.add('on');
+  es.onopen = () => { $('#live-dot').classList.add('on'); setLive(true); };
   es.onerror = () => {
     $('#live-dot').classList.remove('on');
+    setLive(false, 'Connection lost. Reconnecting… the score may be behind');
     // A rejected passcode closes the stream for good; retry with whatever code we have now.
     if (es.readyState === EventSource.CLOSED && S.es === es) setTimeout(() => S.es === es && connectStream(), 3000);
   };
@@ -254,12 +264,22 @@ const ROUTES = [
   [/^#\/wrapped$/, viewWrappedPicker, 'stats'],
   [/^#\/wrapped\/([\w-]+)$/, viewWrapped, ''],
   [/^#\/settings$/, viewSettings, ''],
+  [/^#\/cast$/, viewCast, ''],
 ];
 
 function render() {
   if (!S.db) return;
   const hash = location.hash || '#/';
   const [path, qs] = hash.split('?');
+  // The camera screen stays mounted across live updates (re-rendering would restart the
+  // camera and cut the recording); it just reads the new data.
+  if (S.cast) {
+    if (S.castHash === hash) { S.cast.update(); return; }
+    S.cast.destroy();
+    S.cast = null;
+    S.castConn?.();
+    S.castConn = null;
+  }
   if (S.editor) {
     if (S.editorHash === hash) return renderChrome('plays');
     S.editor.destroy();
@@ -719,11 +739,90 @@ function momentumChart(g) {
     </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// Game clock (optional; see clock.js) + the Cast / Film camera screen
+
+function clockBar(g) {
+  const c = g.clock;
+  const cast = `<a class="btn sm ghost" href="#/cast?g=${g.id}">📹 Cast / Film</a>`;
+  if (!c) {
+    return `<div class="clock-bar"><button class="btn sm ghost" data-a="clock" data-g="${g.id}" data-c="start">⏱ Start game clock</button>${cast}</div>`;
+  }
+  const running = isRunning(c);
+  const atZero = clockElapsed(c, Date.now()) === 0;
+  return `
+    <div class="clock-bar on">
+      <span class="clock-q">${quarterLabel(c.quarter || 1)}</span>
+      <b class="clock-time ${running ? '' : 'paused'}" data-clock-for="${g.id}">${formatClock(clockElapsed(c, Date.now()))}</b>
+      ${running
+        ? `<button class="btn sm" data-a="clock" data-g="${g.id}" data-c="pause">⏸ Pause</button>`
+        : `<button class="btn sm hot" data-a="clock" data-g="${g.id}" data-c="resume">▶ ${atZero ? 'Start' : 'Resume'}</button>`}
+      <details class="clock-more"><summary aria-label="More clock options">⋯</summary>
+        <div>
+          <button class="btn sm ghost" data-a="clock" data-g="${g.id}" data-c="next-quarter">Next quarter</button>
+          <button class="btn sm ghost" data-a="clock" data-g="${g.id}" data-c="reset">Reset to 0:00</button>
+          <button class="btn sm ghost" data-a="clock" data-g="${g.id}" data-c="off">Turn clock off</button>
+        </div>
+      </details>
+      ${cast}
+    </div>`;
+}
+
+// Tick every clock on screen without re-rendering the page.
+setInterval(() => {
+  if (!S.db) return;
+  document.querySelectorAll('[data-clock-for]').forEach((el) => {
+    const g = S.db.games.find((x) => x.id === el.dataset.clockFor);
+    if (g?.clock) el.textContent = formatClock(clockElapsed(g.clock, Date.now()));
+  });
+}, 500);
+
+const castGame = (q) => {
+  const id = q?.get?.('g');
+  const games = S.db.games;
+  return (id && games.find((g) => g.id === id)) || gamesSorted().find((g) => g.status === 'live') || null;
+};
+
+function viewCast(q) {
+  const wanted = q?.get?.('g') || null;
+  S.after = () => {
+    S.castHash = location.hash || '#/';
+    const g0 = castGame(q);
+    S.cast = new CastView($('#cast-root'), {
+      exitHref: g0 ? `#/g/${g0.id}` : '#/',
+      name: nick,
+      live: () => S.live,
+      getState: () => {
+        const g = wanted ? S.db.games.find((x) => x.id === wanted) : castGame(null);
+        if (!g) return { found: false };
+        return {
+          found: true, gameId: g.id, status: g.status, clock: g.clock || null,
+          teams: { A: teamName(g, 'A'), B: teamName(g, 'B') },
+          score: { ...gameInfo(g).summary.score }, events: g.events,
+        };
+      },
+    });
+    // Firebase: watch for a dropped connection while filming (one tiny listener). The first
+    // answer always comes from the phone's cache, so only trust "offline" once the server
+    // has answered at least once, or after a few seconds without hearing from it.
+    if (!S.backend?.watchConnection) return; // local server: the live stream reports drops itself
+    let heard = false;
+    const lost = () => { if (!S.live.dead) setLive(false, 'Connection lost. Reconnecting… the score may be behind'); };
+    const grace = setTimeout(() => { if (!heard) lost(); }, 5000);
+    const unwatch = S.backend.watchConnection((ok) => {
+      if (ok) { heard = true; if (!S.live.dead) setLive(navigator.onLine, navigator.onLine ? '' : 'No signal. The score may be behind'); } else if (heard) lost();
+    });
+    S.castConn = () => { clearTimeout(grace); unwatch(); };
+  };
+  return '<div id="cast-root"></div>';
+}
+
 function liveSection(g) {
   const info = gameInfo(g);
   const events = [...g.events].reverse();
   return `
     ${scoreboard(g)}
+    ${clockBar(g)}
     ${momentumChart(g)}
     <div class="muted small center">📝 Everyone keeps score: log any play you see, including your own.</div>
     ${logger(g)}
@@ -2121,6 +2220,10 @@ const A = {
   },
   start: ({ g }) => run(() => api('POST', `/api/games/${g}/start`, {}), '🏈 Game on! Anyone can log plays'),
   'log-type': ({ g, t }) => { S.log = { gameId: g, type: t, p1: null }; render(); },
+  clock: ({ g, c }) => {
+    if ((c === 'off' || c === 'reset') && !confirm(c === 'off' ? 'Turn the game clock off? It disappears from every screen.' : 'Reset the clock to 0:00?')) return;
+    run(() => api('POST', `/api/games/${g}/clock`, { action: c }));
+  },
   'voice-start': ({ g }) => voiceStart(g),
   'wr-go': ({ d }) => { if (S.wr) { S.wr.i = Math.max(0, S.wr.i + Number(d)); render(); } },
   'share-wrapped': ({ p, s }) => shareWrapped(p, s),
@@ -2406,7 +2509,10 @@ async function bootFirebase() {
       S.backend = await connectFirebase(S.fbConfig);
       // Signed out (here, or because the crew password changed): back to the login screen.
       S.backend.auth.onChange((user) => { if (!user && S.db) { S.db = null; S.backend.stop(); bootFirebase(); } });
-      const dot = () => $('#live-dot').classList.toggle('on', navigator.onLine);
+      const dot = () => {
+        $('#live-dot').classList.toggle('on', navigator.onLine);
+        if (!S.live.dead) setLive(navigator.onLine, navigator.onLine ? '' : 'No signal. The score may be behind');
+      };
       window.addEventListener('online', dot);
       window.addEventListener('offline', dot);
       dot();
@@ -2419,7 +2525,12 @@ async function bootFirebase() {
     }
     const db = await S.backend.start(
       (next) => setDb(next, { remote: true }),
-      (err) => { toast(err.message, true); },
+      (err) => {
+        toast(err.message, true);
+        // the live listeners stop after an error; nothing new arrives until a reload
+        S.live = { ok: false, message: 'Live updates stopped. Close the camera and reload the app', dead: true };
+        S.cast?.update();
+      },
     );
     setDb(db);
     if (!boot.started) {
