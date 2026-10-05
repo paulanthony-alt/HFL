@@ -1390,3 +1390,16 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .bx-f { display: grid; gap: 4px; font: 700 11.5px/1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
 .bx-f input { min-height: 44px; text-align: center; font: 800 20px/1 var(--display); padding: 6px 4px; }
 .bx-warn { margin: 0; color: var(--gold); }
+
+/* ---------- season teams + standings ---------- */
+.st-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.st-table th { font: 700 11px/1 var(--label); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); padding: 6px 6px; text-align: right; }
+.st-table td { padding: 10px 6px; text-align: right; border-top: 1px solid var(--line); font-weight: 700; }
+.st-table .l { text-align: left; }
+.st-table td.l b { font: 900 20px/1 var(--display); text-transform: uppercase; }
+.st-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 2px; }
+.st-roster { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.st-assign { display: grid; gap: 6px; }
+.st-row { display: flex !important; flex-direction: row !important; align-items: center; gap: 10px; text-transform: none !important; letter-spacing: 0 !important; font: 600 15px/1.2 var(--body) !important; color: var(--text) !important; }
+.st-row select { width: 150px; flex: none; }
+.st-cap { margin: 3px 0 0 18px; }

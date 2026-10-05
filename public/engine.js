@@ -462,3 +462,22 @@ export function balanceTeams(players, { random = Math.random, tolerance = 12 } =
   const avgB = mean(B.map((p) => p.elo));
   return { A: A.map((p) => p.id), B: B.map((p) => p.id), diff: Math.abs(avgA - avgB), winProbA: winProbability(avgA, avgB) };
 }
+
+// Season standings for the season teams (games that recorded which team played which side).
+// → [{ id, w, l, t, gp, pf, pa, pct }] best first.
+export function seasonStandings(db, league, season, teams = db.settings?.teams || []) {
+  const rows = new Map(teams.map((t) => [t.id, { id: t.id, w: 0, l: 0, t: 0, gp: 0, pf: 0, pa: 0 }]));
+  for (const g of db.games || []) {
+    if (g.status !== 'final' || !g.teamIds || (season && String(g.season) !== String(season))) continue;
+    const sum = league.games[g.id]?.summary || summarizeGame(g);
+    for (const side of ['A', 'B']) {
+      const r = rows.get(g.teamIds[side]);
+      if (!r) continue;
+      const other = side === 'A' ? 'B' : 'A';
+      r.gp++; r.pf += sum.score[side]; r.pa += sum.score[other];
+      if (sum.winner === side) r.w++; else if (sum.winner === 'tie') r.t++; else r.l++;
+    }
+  }
+  return [...rows.values()].map((r) => ({ ...r, pct: r.gp ? (r.w + r.t / 2) / r.gp : 0 }))
+    .sort((a, b) => b.pct - a.pct || (b.pf - b.pa) - (a.pf - a.pa));
+}

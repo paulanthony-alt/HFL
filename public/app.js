@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION, rsvpOpen, commissionerIds, localToday, teamCaptain, cleanPlay } from './league.js';
+import { ROSTER_VERSION, TEAMS_VERSION, rsvpOpen, commissionerIds, localToday, teamCaptain, cleanPlay, seasonTeams, seasonCaptain } from './league.js';
 import { TEAM_PIN, makeLock, openLock, secretsMatch, encryptJSON, decryptJSON } from './teamlock.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
@@ -259,8 +259,10 @@ const ROUTES = [
   [/^#\/p\/([\w-]+)$/, viewCard, 'cards'],
   [/^#\/plays$/, viewPlays, 'plays'],
   [/^#\/play\/([\w-]+)$/, viewPlay, 'plays'],
-  [/^#\/team\/([\w-]+)\/([AB])$/, viewTeamBook, 'plays'],
-  [/^#\/team\/([\w-]+)\/([AB])\/p\/([\w-]+)$/, viewTeamPlay, 'plays'],
+  [/^#\/team\/([\w-]+)\/([AB])$/, (gid, side) => viewBook(`g~${gid}~${side}`), 'plays'],
+  [/^#\/team\/([\w-]+)\/([AB])\/p\/([\w-]+)$/, (gid, side, pid) => viewBookPlay(`g~${gid}~${side}`, pid), 'plays'],
+  [/^#\/club\/([\w-]+)$/, (tid) => viewBook(`t~${tid}`), 'plays'],
+  [/^#\/club\/([\w-]+)\/p\/([\w-]+)$/, (tid, pid) => viewBookPlay(`t~${tid}`, pid), 'plays'],
   [/^#\/wall$/, viewWall, 'wall'],
   [/^#\/fame$/, viewFame, 'fame'],
   [/^#\/fame\/new$/, viewFameNew, 'fame'],
@@ -350,7 +352,34 @@ function ensureRoster() {
       toast(n.length ? `🏈 ${n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n.at(-1)}` : n[0]} joined the HFL` : '🏈 The HFL roster is set. Tap “Who are you?” to pick yourself');
     })
     .catch(() => {})
-    .finally(() => { ensureRoster.running = false; });
+    .finally(() => { ensureRoster.running = false; ensureTeams(); });
+}
+
+// One-time: set up the season teams (HFL_TEAMS in league.js) once the roster is in.
+function ensureTeams() {
+  if ((S.db.settings.rosterVersion || 0) < ROSTER_VERSION) return;
+  if ((S.db.settings.teamsVersion || 0) >= TEAMS_VERSION || ensureTeams.running) return;
+  ensureTeams.running = true;
+  api('POST', '/api/setup-teams')
+    .then((r) => { if (r?.changed) toast(`🏈 Season teams are set: ${r.teams.join(' vs ')}`); })
+    .catch(() => {})
+    .finally(() => { ensureTeams.running = false; });
+}
+
+// Season standings card (when the league has season teams).
+function standingsCard(season = S.db.settings.season, { compact = false } = {}) {
+  const teams = seasonTeams(S.db);
+  if (teams.length !== 2) return '';
+  const rows = E.seasonStandings(S.db, S.league, season, teams);
+  const t = (tid) => teams.find((x) => x.id === tid);
+  return `
+    <section class="card standings">
+      <div class="row-between"><h3>Standings</h3><span class="muted small">Season ${h(season)}</span></div>
+      <table class="st-table"><thead><tr><th class="l">Team</th><th>W</th><th>L</th>${compact ? '' : '<th>T</th><th>PF</th><th>PA</th>'}<th>Diff</th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { const c = seasonCaptain(S.db, t(r.id), S.league); return c && !compact ? `<div class="muted small st-cap">Captain ${h(nick(c))}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
+      </tbody></table>
+      ${rows.every((r) => !r.gp) ? '<p class="muted small">No games finished yet this season.</p>' : ''}
+    </section>`;
 }
 
 // Tell a player (once per phone) when he unlocks a new card design.
@@ -509,6 +538,7 @@ function viewHome() {
   const rest = finals.filter((g) => g !== current);
   const potw = S.awards.potw.at(-1);
   const side = `
+    ${standingsCard(S.db.settings.season, { compact: true })}
     ${potw ? `
       ${sec('Player of the Week', '<a class="sec-link" href="#/awards">Awards ›</a>')}
       <a class="potw" href="#/p/${potw.id}">
@@ -626,7 +656,7 @@ function teamColumns(g, { editable = false, info = null } = {}) {
     const avg = ids.length ? Math.round(ids.reduce((a, id) => a + ovr(id), 0) / ids.length) : 0;
     return `
       <div class="team team-${side}">
-        <button class="team-name" ${editable ? `data-a="rename-team" data-g="${g.id}" data-side="${side}"` : 'disabled'}>${h(teamName(g, side))}${editable ? ' ✎' : ''}</button>
+        <button class="team-name" ${editable && !g.teamIds ? `data-a="rename-team" data-g="${g.id}" data-side="${side}"` : 'disabled'}>${h(teamName(g, side))}${editable && !g.teamIds ? ' ✎' : ''}</button>
         <div class="muted small">avg OVR ${avg}</div>
         ${ids.map((id) => `
           <${editable ? `button data-a="swap" data-g="${g.id}" data-p="${id}"` : 'div'} class="tp">
@@ -662,7 +692,29 @@ function scoutingReport(g) {
   return `<div class="scout"><div class="scout-grid">${side('A', A, B)}${side('B', B, A)}</div></div>`;
 }
 
+// Season teams: no shuffling. RSVP in and you're on your team; free agents and walk-ons get
+// added to whichever side needs them.
+function seasonTeamsSection(g) {
+  const onTeam = new Set([...g.teams.A, ...g.teams.B]);
+  const waiting = activePlayers().filter((p) => g.rsvps[p.id] === 'in' && !onTeam.has(p.id));
+  const walkOns = activePlayers().filter((p) => g.rsvps[p.id] !== 'in' && !onTeam.has(p.id));
+  const ready = g.teams.A.length && g.teams.B.length;
+  return `
+    <div class="divider"></div>
+    ${sec('Teams', '<span class="sec-link muted">Set for the season</span>')}
+    ${teamColumns(g, { editable: true })}
+    <p class="muted small">RSVP in and you're on your team. Tap a player to move him to the other side for this game.</p>
+    ${waiting.length ? `<div class="chips-label">In, no team (free agents)</div><div class="chips">${waiting.map((p) => `<button class="pchip" data-a="bench-add" data-g="${g.id}" data-p="${p.id}">+ ${h(nick(p.id))}</button>`).join('')}</div>` : ''}
+    ${!rsvpOpen(g) && walkOns.length ? `<div class="chips-label">Walk-ons (didn't RSVP but showed up)</div><div class="chips">${walkOns.map((p) => `<button class="pchip" data-a="bench-add" data-g="${g.id}" data-p="${p.id}">+ ${h(nick(p.id))}</button>`).join('')}</div>` : ''}
+    <div class="btn-row">
+      ${!ready ? '<span class="start-later grow">Both teams need players before kickoff</span>' : localToday() >= g.date
+        ? `<button class="btn hot grow" data-a="start" data-g="${g.id}">▶ Start game</button>`
+        : `<span class="start-later grow">▶ You can start the game on game day (${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))})</span>`}
+    </div>`;
+}
+
 function teamsSection(g) {
+  if (g.teamIds) return seasonTeamsSection(g);
   const ins = activePlayers().filter((p) => g.rsvps[p.id] === 'in');
   const hasTeams = g.teams.A.length && g.teams.B.length;
   const onTeam = new Set([...g.teams.A, ...g.teams.B]);
@@ -1240,6 +1292,7 @@ function viewStats() {
         ${seasons().map((s) => `<option value="${h(s)}" ${S.season === s ? 'selected' : ''}>Season ${h(s)}</option>`).join('')}
         <option value="career" ${S.season === 'career' ? 'selected' : ''}>Career</option>
       </select>`)}
+    ${S.season !== 'career' ? standingsCard(S.season) : ''}
     <div class="tabs-scroll">${Object.entries(STAT_TABS).map(([k, l]) => `<button class="tab-chip ${tab === k ? 'on' : ''}" data-a="stat-tab" data-t="${k}">${l}</button>`).join('')}</div>
     ${list.length ? `
       <div class="lb-wrap"><table class="lb">
@@ -1853,7 +1906,7 @@ function viewMe() {
 // Playbook
 
 function viewPlays() {
-  const plays = S.db.plays.filter((p) => !p.gameId).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const plays = S.db.plays.filter((p) => !p.gameId && !p.teamId).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   return `
     ${pageHead('5v5', 'Playbook')}
     ${teamPlaybooksSection()}
@@ -1871,7 +1924,7 @@ function viewPlays() {
 function viewPlay(id) {
   const existing = id === 'new' ? null : S.db.plays.find((p) => p.id === id);
   if (id !== 'new' && !existing) return `<p class="muted">That play was deleted. <a href="#/plays">Back</a></p>`;
-  if (existing?.gameId) return `<p class="muted">That's a team play. <a href="#/team/${existing.gameId}/${existing.side}">Open the team playbook ›</a></p>`;
+  if (existing?.gameId || existing?.teamId) return `<p class="muted">That's a team play. <a href="${bookOf(playBookRef(existing))?.href || '#/plays'}">Open the team playbook ›</a></p>`;
   S.after = () => {
     S.editorHash = location.hash;
     S.editor = new PlayEditor($('#pb-root'), existing || newPlay(), {
@@ -1909,155 +1962,170 @@ function viewPlay(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Team playbooks: private per game side, unlocked with the team PIN (see teamlock.js)
+// Team playbooks: private and encrypted with a team PIN (see teamlock.js). A playbook ("book")
+// belongs to a season team (ref "t~<teamId>"), or, for games from before season teams, to one
+// side of one game (ref "g~<gameId>~<side>"). Both use the same screens.
 
-const teamKeyName = (gid, side) => `hfl.team.${gid}.${side}`;
-function teamSecrets(g, side) {
+function bookOf(ref) {
+  const [kind, a, b] = String(ref).split('~');
+  if (kind === 't') {
+    const list = seasonTeams(S.db);
+    const t = list.find((x) => x.id === a);
+    if (!t) return null;
+    return { ref, kind, name: t.name, side: list.indexOf(t) === 0 ? 'A' : 'B', lock: t.lock, members: t.players,
+      captain: seasonCaptain(S.db, t, S.league), docs: () => S.db.plays.filter((p) => p.teamId === t.id), stamp: { teamId: t.id },
+      lockUrl: `/api/season-teams/${t.id}/lock`, lockBody: {}, href: `#/club/${t.id}`, key: `hfl.club.${t.id}`, sub: `Season ${S.db.settings.season}` };
+  }
+  const g = S.db.games.find((x) => x.id === a);
+  if (!g || !['A', 'B'].includes(b)) return null;
+  return { ref, kind: 'g', name: teamName(g, b), side: b, lock: g.teamLocks?.[b], members: g.teams?.[b] || [],
+    captain: teamCaptain(S.db, g, b, S.league), docs: () => S.db.plays.filter((p) => p.gameId === g.id && p.side === b), stamp: { gameId: g.id, side: b },
+    lockUrl: `/api/games/${g.id}/team-lock`, lockBody: { side: b }, href: `#/team/${g.id}/${b}`, key: `hfl.team.${g.id}.${b}`,
+    sub: fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }) };
+}
+const playBookRef = (p) => (p.teamId ? `t~${p.teamId}` : `g~${p.gameId}~${p.side}`);
+function bookSecrets(book) {
   try {
-    const s = JSON.parse(lsGet(teamKeyName(g.id, side)) || 'null');
-    return secretsMatch(g.teamLocks?.[side], s) ? s : null;
+    const s = JSON.parse(lsGet(book.key) || 'null');
+    return secretsMatch(book.lock, s) ? s : null;
   } catch { return null; }
 }
-const captainOf = (g, side) => teamCaptain(S.db, g, side, S.league);
-const canManageTeam = (g, side) => { const m = me(); return !!m && pinOk(m) && (isAdmin(m) || m === captainOf(g, side)); };
-const teamPlayDocs = (g, side) => S.db.plays.filter((p) => p.gameId === g.id && p.side === side);
+const canManageBook = (book) => { const m = me(); return !!m && pinOk(m) && (isAdmin(m) || m === book.captain); };
 
-// The game whose teams get playbooks right now: the live one, else the next one with teams.
+// The game whose two sides get per-game playbooks (only when there are no season teams).
 function playbookGame() {
   const withTeams = gamesSorted().filter((g) => g.teams?.A?.length && g.teams?.B?.length);
   return withTeams.find((g) => g.status === 'live') || withTeams.find((g) => g.status === 'scheduled') || withTeams.filter((g) => g.status === 'final').at(-1) || null;
 }
 
-// Decrypted team plays, cached; decrypting is async, so the first call starts it and re-renders.
+// Decrypted plays, cached; decrypting is async, so the first call starts it and re-renders.
 S.tcache = {};
-function teamPlays(g, side) {
-  const sec = teamSecrets(g, side);
-  if (!sec) return null;
-  const docs = teamPlayDocs(g, side);
-  const k = `${g.id}|${side}`;
-  const sig = `${sec.proof.slice(0, 8)}|${docs.map((p) => `${p.id}@${p.updatedAt}`).join(',')}`;
-  const c = S.tcache[k];
+function bookPlays(book) {
+  const keys = bookSecrets(book);
+  if (!keys) return null;
+  const docs = book.docs();
+  const sig = `${keys.proof.slice(0, 8)}|${docs.map((p) => `${p.id}@${p.updatedAt}`).join(',')}`;
+  const c = S.tcache[book.ref];
   if (c?.sig === sig) return c.plays;
   if (c?.pending !== sig) {
-    S.tcache[k] = { ...c, pending: sig };
+    S.tcache[book.ref] = { ...c, pending: sig };
     Promise.all(docs.map(async (p) => {
-      try { return { ...(await decryptJSON(sec.key, p.enc)), id: p.id, authorId: p.authorId, updatedAt: p.updatedAt }; } catch { return { id: p.id, broken: true, name: '🔒 Locked with an old PIN' }; }
-    })).then((plays) => { S.tcache[k] = { sig, plays }; render(); });
+      try { return { ...(await decryptJSON(keys.key, p.enc)), id: p.id, authorId: p.authorId, updatedAt: p.updatedAt }; } catch { return { id: p.id, broken: true, name: '🔒 Locked with an old PIN' }; }
+    })).then((plays) => { S.tcache[book.ref] = { sig, plays }; render(); });
   }
   return c?.plays ?? null; // last good list while the new one decrypts
 }
 
-function teamTile(g, side) {
-  const cap = captainOf(g, side);
-  const lock = g.teamLocks?.[side];
-  const open = !!teamSecrets(g, side);
-  const n = teamPlayDocs(g, side).length;
-  const status = open ? 'Unlocked on this phone ›' : lock ? '🔒 Enter team PIN ›' : canManageTeam(g, side) ? 'Set the team PIN ›' : `Waiting for ${h(nick(cap))} to set a PIN`;
+function bookTile(book) {
+  const open = !!bookSecrets(book);
+  const n = book.docs().length;
+  const status = open ? 'Unlocked on this phone ›' : book.lock ? '🔒 Enter team PIN ›' : canManageBook(book) ? 'Set the team PIN ›' : `Waiting for ${h(nick(book.captain))} to set a PIN`;
   return `
-    <a class="team-book team-${side} ${open ? 'open' : ''}" href="#/team/${g.id}/${side}">
-      <div class="tb-name">${h(teamName(g, side))}</div>
-      <div class="tb-cap">${avatar(cap, 'xs')} <span>${h(nick(cap))}</span> <small>Captain</small></div>
+    <a class="team-book team-${book.side} ${open ? 'open' : ''}" href="${book.href}">
+      <div class="tb-name">${h(book.name)}</div>
+      ${book.captain ? `<div class="tb-cap">${avatar(book.captain, 'xs')} <span>${h(nick(book.captain))}</span> <small>Captain</small></div>` : ''}
       <div class="tb-count"><b>${n}</b> play${n === 1 ? '' : 's'}</div>
       <div class="tb-status">${status}</div>
     </a>`;
 }
 
 function teamPlaybooksSection() {
-  const g = playbookGame();
-  const past = gamesSorted().filter((x) => x !== g && ['A', 'B'].some((s) => teamSecrets(x, s))).reverse().slice(0, 6);
-  if (!g && !past.length) return '';
+  const teams = seasonTeams(S.db);
+  const books = teams.length === 2 ? teams.map((t) => bookOf(`t~${t.id}`)) : (() => { const g = playbookGame(); return g ? ['A', 'B'].map((x) => bookOf(`g~${g.id}~${x}`)) : []; })();
+  const shown = new Set(books.map((b) => b.ref));
+  const older = gamesSorted().reverse().flatMap((g) => ['A', 'B'].map((x) => bookOf(`g~${g.id}~${x}`))).filter((b) => b && !shown.has(b.ref) && bookSecrets(b)).slice(0, 6);
+  if (!books.length && !older.length) return '';
   return `
-    ${g ? `
-      ${sec(`Team playbooks <span class="muted small">· ${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</span>`)}
-      <div class="team-books">${teamTile(g, 'A')}${teamTile(g, 'B')}</div>
+    ${books.length ? `
+      ${sec(`Team playbooks <span class="muted small">· ${h(books[0].sub)}</span>`)}
+      <div class="team-books">${books.map(bookTile).join('')}</div>
       <p class="muted small">Private to each team: only guys with the team PIN can see or change them. Captains (the highest-rated player on each team) or league admins set the PIN.</p>` : ''}
-    ${past.length ? `<details class="card-lite"><summary>Your older team playbooks (${past.length})</summary>${past.map((x) => ['A', 'B'].filter((s) => teamSecrets(x, s)).map((s) => `
-      <a class="row-link" href="#/team/${x.id}/${s}">${h(teamName(x, s))} · ${h(fmtDate(x.date, { month: 'short', day: 'numeric' }))} <span class="muted small">${teamPlayDocs(x, s).length} plays</span></a>`).join('')).join('')}</details>` : ''}`;
+    ${older.length ? `<details class="card-lite"><summary>Your older team playbooks (${older.length})</summary>${older.map((b) => `
+      <a class="row-link" href="${b.href}">${h(b.name)} · ${h(b.sub)} <span class="muted small">${b.docs().length} plays</span></a>`).join('')}</details>` : ''}`;
 }
 
-function viewTeamBook(gid, side) {
-  const g = S.db.games.find((x) => x.id === gid);
-  if (!g) return `<p class="muted">That game is gone. <a href="#/plays">Back</a></p>`;
-  const lock = g.teamLocks?.[side];
-  const cap = captainOf(g, side);
-  const manage = canManageTeam(g, side);
+function viewBook(ref) {
+  const book = bookOf(ref);
+  if (!book) return `<p class="muted">That playbook is gone. <a href="#/plays">Back</a></p>`;
+  const cap = book.captain;
+  const manage = canManageBook(book);
+  const data = `data-b="${h(book.ref)}"`;
   const head = `
     <a class="back" href="#/plays">‹ Playbook</a>
-    ${pageHead(`${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))} · Captain ${h(nick(cap))}`, `${h(teamName(g, side))} playbook`)}`;
+    ${pageHead(`${h(book.sub)}${cap ? ` · Captain ${h(nick(cap))}` : ''}`, `${h(book.name)} playbook`)}`;
   const pinFields = (label) => `
     <label>${label} <input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="off" required placeholder="6 digits"></label>
     <label>Type it again <input name="pin2" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="off" required></label>`;
-  if (!lock) {
+  if (!book.lock) {
     if (!manage) {
-      const lockedAdmin = isAdmin(S.me) || S.me === cap;
+      const lockedAdmin = isAdmin(S.me) || (S.me && S.me === cap);
       return `${head}<section class="card">${empty({ art: 'chalk', title: 'No team PIN yet', text: `${h(nick(cap))} (the captain) or a league admin sets the PIN. Then the team can draw plays the other side can't see.`, cta: lockedAdmin ? `<a class="btn hot" href="#/unlock/${S.me}">Enter your PIN to set it</a>` : '' })}</section>`;
     }
     return `${head}
       <section class="card">
         <h3>Set the team PIN</h3>
         <p class="muted small">Pick 6 digits and tell your teammates in person (not in the group chat, the other team is in there). The other team can't open this playbook without it.</p>
-        <form class="form" data-f="team-setpin" data-g="${g.id}" data-side="${side}">${pinFields('Team PIN')}<button class="btn hot block">🔒 Lock the playbook</button></form>
+        <form class="form" data-f="team-setpin" ${data}>${pinFields('Team PIN')}<button class="btn hot block">🔒 Lock the playbook</button></form>
       </section>`;
   }
-  const keys = teamSecrets(g, side);
+  const keys = bookSecrets(book);
   if (!keys) {
     return `${head}
       <section class="card">
         <h3>🔒 Enter the team PIN</h3>
         <p class="muted small">Ask ${h(nick(cap))}, the captain. This phone remembers it until you lock it again.</p>
-        <form class="form" data-f="team-unlock" data-g="${g.id}" data-side="${side}">
+        <form class="form" data-f="team-unlock" ${data}>
           <label>Team PIN <input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" required autofocus></label>
           <button class="btn hot block">Unlock</button>
         </form>
       </section>
-      ${manage ? `<details class="card-lite"><summary>Forgot the team PIN?</summary><p class="muted small">Resetting deletes this team's ${teamPlayDocs(g, side).length} plays for good (nobody can open them without the old PIN), then you set a new one.</p><button class="btn block danger-outline" data-a="team-reset" data-g="${g.id}" data-side="${side}">Reset the team PIN</button></details>` : ''}`;
+      ${manage ? `<details class="card-lite"><summary>Forgot the team PIN?</summary><p class="muted small">Resetting deletes this team's ${book.docs().length} plays for good (nobody can open them without the old PIN), then you set a new one.</p><button class="btn block danger-outline" data-a="team-reset" ${data}>Reset the team PIN</button></details>` : ''}`;
   }
-  const plays = teamPlays(g, side);
-  const league = S.db.plays.filter((p) => !p.gameId);
+  const plays = bookPlays(book);
+  const league = S.db.plays.filter((p) => !p.gameId && !p.teamId);
   return `${head}
-    <div class="row-between"><span class="chip">🔓 Unlocked on this phone</span><a class="btn sm hot" href="#/team/${g.id}/${side}/p/new">+ New play</a></div>
+    <div class="row-between"><span class="chip">🔓 Unlocked on this phone</span><a class="btn sm hot" href="${book.href}/p/new">+ New play</a></div>
     ${plays === null ? `<p class="muted center">Unlocking…</p>` : plays.length ? `<div class="play-grid">${plays.map((pl) => `
-      <a class="play-tile" href="#/team/${g.id}/${side}/p/${pl.id}">
+      <a class="play-tile" href="${book.href}/p/${pl.id}">
         ${pl.broken ? '<div class="thumb"></div>' : playSVG(pl, { cls: 'thumb' })}
         <div class="pt-name">${h(pl.name)}</div>
         <div class="muted small">${pl.authorId ? `by ${h(nick(pl.authorId))} · ` : ''}${h(ago(pl.updatedAt))}</div>
       </a>`).join('')}</div>` : `<section class="card">${empty({ art: 'chalk', title: 'Empty playbook', text: 'Draw a play, or copy one in from the league playbook.' })}</section>`}
     ${league.length ? `<details class="card-lite"><summary>Copy a play from the league playbook</summary>${league.map((p) => `
-      <div class="row-between copy-row"><span>${h(p.name)}</span><button class="btn sm ghost" data-a="team-copy" data-g="${g.id}" data-side="${side}" data-p="${p.id}">Copy in</button></div>`).join('')}</details>` : ''}
+      <div class="row-between copy-row"><span>${h(p.name)}</span><button class="btn sm ghost" data-a="team-copy" ${data} data-p="${p.id}">Copy in</button></div>`).join('')}</details>` : ''}
     <details class="card-lite"><summary>Team PIN</summary>
-      <button class="btn block ghost" data-a="team-forget" data-g="${g.id}" data-side="${side}">🔒 Lock it on this phone</button>
+      <button class="btn block ghost" data-a="team-forget" ${data}>🔒 Lock it on this phone</button>
       ${manage ? `
-        <form class="form" data-f="team-changepin" data-g="${g.id}" data-side="${side}">${pinFields('New team PIN')}<button class="btn block">Change the team PIN</button></form>
-        <button class="btn block danger-outline" data-a="team-reset" data-g="${g.id}" data-side="${side}">Reset (deletes this team's plays)</button>` : ''}
+        <form class="form" data-f="team-changepin" ${data}>${pinFields('New team PIN')}<button class="btn block">Change the team PIN</button></form>
+        <button class="btn block danger-outline" data-a="team-reset" ${data}>Reset (deletes this team's plays)</button>` : ''}
     </details>`;
 }
 
-function viewTeamPlay(gid, side, pid) {
-  const g = S.db.games.find((x) => x.id === gid);
-  const keys = g && teamSecrets(g, side);
-  if (!keys) return `<a class="back" href="#/team/${gid}/${side}">‹ Team playbook</a><p class="muted">Unlock the team playbook first.</p>`;
-  const plays = teamPlays(g, side);
-  if (plays === null) return `<a class="back" href="#/team/${gid}/${side}">‹ Team playbook</a><p class="muted center">Unlocking…</p>`;
+function viewBookPlay(ref, pid) {
+  const book = bookOf(ref);
+  const keys = book && bookSecrets(book);
+  const back = book?.href || '#/plays';
+  if (!keys) return `<a class="back" href="${back}">‹ Team playbook</a><p class="muted">Unlock the team playbook first.</p>`;
+  const plays = bookPlays(book);
+  if (plays === null) return `<a class="back" href="${back}">‹ Team playbook</a><p class="muted center">Unlocking…</p>`;
   const existing = pid === 'new' ? null : plays.find((p) => p.id === pid);
-  if (pid !== 'new' && (!existing || existing.broken)) return `<a class="back" href="#/team/${gid}/${side}">‹ Team playbook</a><p class="muted">That play is gone.</p>`;
-  const back = `#/team/${gid}/${side}`;
+  if (pid !== 'new' && (!existing || existing.broken)) return `<a class="back" href="${back}">‹ Team playbook</a><p class="muted">That play is gone.</p>`;
   S.after = () => {
     S.editorHash = location.hash;
     S.editor = new PlayEditor($('#pb-root'), existing ? structuredClone(existing) : newPlay(), {
       onSave: (play, ed) => run(async () => {
         if (!play.name.trim()) throw new Error('Give the play a name first');
-        const clean = cleanPlay(play); // same checks as league plays, before it's locked up
-        const box = await encryptJSON(keys.key, clean);
+        const box = await encryptJSON(keys.key, cleanPlay(play)); // same checks as league plays, then locked up
         if (existing) {
           await api('PUT', `/api/plays/${existing.id}`, { enc: box, _team: keys.proof });
           ed.dirty = false;
           toast('Saved 🔒');
         } else {
-          const saved = await api('POST', '/api/plays', { gameId: gid, side, enc: box, authorId: me(), _team: keys.proof });
+          const saved = await api('POST', '/api/plays', { ...book.stamp, enc: box, authorId: me(), _team: keys.proof });
           S.editor?.destroy();
           S.editor = null;
           location.hash = `${back}/p/${saved.id}`;
-          toast(`Added to the ${teamName(g, side)} playbook 🔒`);
+          toast(`Added to the ${book.name} playbook 🔒`);
         }
       }),
       onShare: (play) => sharePlay(play, { link: false }),
@@ -2073,8 +2141,8 @@ function viewTeamPlay(gid, side, pid) {
     });
   };
   return `
-    <a class="back" href="${back}">‹ ${h(teamName(g, side))} playbook</a>
-    <div class="muted small">🔒 Private to ${h(teamName(g, side))}${existing?.authorId ? ` · drawn up by ${h(nick(existing.authorId))}` : ''}</div>
+    <a class="back" href="${back}">‹ ${h(book.name)} playbook</a>
+    <div class="muted small">🔒 Private to ${h(book.name)}${existing?.authorId ? ` · drawn up by ${h(nick(existing.authorId))}` : ''}</div>
     <div id="pb-root" class="pb"></div>`;
 }
 
@@ -2321,6 +2389,41 @@ function viewRules() {
     ${boss ? `<section class="card"><h3>Add a rule</h3>${ruleForm()}</section>` : ''}`;
 }
 
+function seasonTeamsSettings() {
+  const teams = seasonTeams(S.db);
+  if (teams.length !== 2) return '';
+  const boss = iAmCommish();
+  const where = (pid) => teams.findIndex((t) => t.players.includes(pid));
+  if (!boss) {
+    return `
+      <section class="card">
+        <h3>Season teams</h3>
+        ${teams.map((t) => `<div class="st-roster"><b style="color:${h(t.color)}">${h(t.name)}</b><span>${t.players.map((pid) => h(nick(pid))).join(', ')}</span></div>`).join('')}
+        <p class="muted small">League admins can change the teams here.</p>
+      </section>`;
+  }
+  return `
+    <section class="card">
+      <h3>Season teams</h3>
+      <form data-f="season-teams" class="form">
+        <div class="form-row">${teams.map((t, i) => `
+          <label>Team ${i + 1} <input name="name${i}" maxlength="24" required value="${h(t.name)}"></label>
+          <label class="color-label">Color <input name="color${i}" type="color" value="${h(t.color || (i ? '#36c8ff' : '#ff5a1f'))}"></label>`).join('')}
+        </div>
+        <div class="st-assign">${activePlayers().map((p) => `
+          <label class="st-row">${avatar(p.id, 'xs')}<span class="grow">${h(p.name)}</span>
+            <select name="team.${p.id}">
+              <option value="-1" ${where(p.id) < 0 ? 'selected' : ''}>Free agent</option>
+              ${teams.map((t, i) => `<option value="${i}" ${where(p.id) === i ? 'selected' : ''}>${h(t.name)}</option>`).join('')}
+            </select>
+          </label>`).join('')}
+        </div>
+        <p class="muted small">Games that haven't started follow the new teams right away; finished games keep who actually played. Free agents can be added to either side on game day.</p>
+        <button class="btn hot block">Save teams</button>
+      </form>
+    </section>`;
+}
+
 function viewSettings() {
   const players = [...allPlayers()].sort((a, b) => a.name.localeCompare(b.name));
   return `
@@ -2333,6 +2436,7 @@ function viewSettings() {
         <button class="btn">Save</button>
       </form>
     </section>
+    ${seasonTeamsSettings()}
     <section class="card">
       <div class="row-between"><h3>Roster (${players.length})</h3><a class="btn sm" href="#/new-player">+ Player</a></div>
       <p class="muted small">🔒 = claimed with a PIN.</p>
@@ -2587,21 +2691,22 @@ const A = {
     if (!confirm('Throw away the typed-in stats and go back to play-by-play?')) return;
     run(async () => { await api('PUT', `/api/games/${g}/box`, { box: null }); location.hash = `#/g/${g}`; }, 'Back to play-by-play');
   },
-  'team-forget': ({ g, side }) => { lsSet(teamKeyName(g, side), ''); toast('🔒 Locked on this phone'); render(); },
-  'team-reset': ({ g, side }) => {
-    const game = S.db.games.find((x) => x.id === g);
-    const n = teamPlayDocs(game, side).length;
-    if (!confirm(`Reset the ${teamName(game, side)} team PIN?${n ? ` This deletes the team's ${n} play${n > 1 ? 's' : ''} for good.` : ''}`)) return;
-    run(async () => { await api('POST', `/api/games/${g}/team-lock`, { side, reset: true, lock: null }); lsSet(teamKeyName(g, side), ''); }, 'Team PIN reset. Set a new one');
+  'team-forget': ({ b }) => { const book = bookOf(b); if (book) lsSet(book.key, ''); toast('🔒 Locked on this phone'); render(); },
+  'team-reset': ({ b }) => {
+    const book = bookOf(b);
+    if (!book) return;
+    const n = book.docs().length;
+    if (!confirm(`Reset the ${book.name} team PIN?${n ? ` This deletes the team's ${n} play${n > 1 ? 's' : ''} for good.` : ''}`)) return;
+    run(async () => { await api('POST', book.lockUrl, { ...book.lockBody, reset: true, lock: null }); lsSet(book.key, ''); }, 'Team PIN reset. Set a new one');
   },
-  'team-copy': ({ g, side, p }) => {
-    const game = S.db.games.find((x) => x.id === g);
-    const sec = teamSecrets(game, side);
-    const src = S.db.plays.find((x) => x.id === p && !x.gameId);
-    if (!sec || !src) return;
+  'team-copy': ({ b, p }) => {
+    const book = bookOf(b);
+    const keys = book && bookSecrets(book);
+    const src = S.db.plays.find((x) => x.id === p && !x.gameId && !x.teamId);
+    if (!keys || !src) return;
     run(async () => {
-      const box = await encryptJSON(sec.key, cleanPlay(src));
-      await api('POST', '/api/plays', { gameId: g, side, enc: box, authorId: me(), _team: sec.proof });
+      const box = await encryptJSON(keys.key, cleanPlay(src));
+      await api('POST', '/api/plays', { ...book.stamp, enc: box, authorId: me(), _team: keys.proof });
     }, `Copied “${src.name}” in 🔒`);
   },
   'rule-cancel': () => { S.ruleEdit = null; render(); },
@@ -2740,31 +2845,36 @@ const FORMS = {
     toast(form.dataset.claimed ? `Unlocked. What's up, ${nick(id)} 👊` : `🔒 ${P(id).name} is yours. Don't forget your PIN`);
     location.hash = P(id).nickname ? '#/' : '#/nickname';
   },
+  'season-teams': (d) => {
+    const teams = seasonTeams(S.db).map((t, i) => ({ id: t.id, name: d[`name${i}`], color: d[`color${i}`], players: [] }));
+    for (const [k, v] of Object.entries(d)) if (k.startsWith('team.') && v !== '-1') teams[Number(v)]?.players.push(k.slice(5));
+    run(() => api('PUT', '/api/season-teams', { teams }), '🏈 Season teams saved');
+  },
   'team-setpin': async (d, form) => {
-    const { g: gid, side } = form.dataset;
+    const book = bookOf(form.dataset.b);
+    if (!book) return;
     if (!TEAM_PIN.test(d.pin)) return toast('The team PIN has to be 4 to 8 digits', true);
     if (d.pin !== d.pin2) return toast("The two PINs don't match", true);
     const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = 'Locking…';
     try {
       const { lock, secrets } = await makeLock(d.pin);
-      const ok = await run(() => api('POST', `/api/games/${gid}/team-lock`, { side, lock }), '🔒 Team PIN set. Tell your teammates in person');
-      if (ok) lsSet(teamKeyName(gid, side), JSON.stringify(secrets));
+      const ok = await run(() => api('POST', book.lockUrl, { ...book.lockBody, lock }), '🔒 Team PIN set. Tell your teammates in person');
+      if (ok) lsSet(book.key, JSON.stringify(secrets));
     } finally { render(); }
   },
   'team-unlock': async (d, form) => {
-    const { g: gid, side } = form.dataset;
-    const g = S.db.games.find((x) => x.id === gid);
+    const book = bookOf(form.dataset.b);
+    if (!book) return;
     const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = 'Checking…';
-    const secrets = await openLock(g?.teamLocks?.[side], d.pin.trim());
+    const secrets = await openLock(book.lock, d.pin.trim());
     if (!secrets) { btn.disabled = false; btn.textContent = 'Unlock'; form.reset(); return toast('Wrong team PIN', true); }
-    lsSet(teamKeyName(gid, side), JSON.stringify(secrets));
-    toast(`🔓 ${teamName(g, side)} playbook unlocked`);
+    lsSet(book.key, JSON.stringify(secrets));
+    toast(`🔓 ${book.name} playbook unlocked`);
     render();
   },
   'team-changepin': async (d, form) => {
-    const { g: gid, side } = form.dataset;
-    const g = S.db.games.find((x) => x.id === gid);
-    const old = teamSecrets(g, side);
+    const book = bookOf(form.dataset.b);
+    const old = book && bookSecrets(book);
     if (!old) return toast('Unlock the playbook first', true);
     if (!TEAM_PIN.test(d.pin)) return toast('The team PIN has to be 4 to 8 digits', true);
     if (d.pin !== d.pin2) return toast("The two PINs don't match", true);
@@ -2772,9 +2882,9 @@ const FORMS = {
     try {
       const { lock, secrets } = await makeLock(d.pin);
       // every play gets re-locked with the new PIN
-      const plays = await Promise.all(teamPlayDocs(g, side).map(async (p) => ({ id: p.id, enc: await encryptJSON(secrets.key, await decryptJSON(old.key, p.enc)) })));
-      const ok = await run(() => api('POST', `/api/games/${gid}/team-lock`, { side, lock, plays, _team: old.proof }), '🔒 Team PIN changed. Tell your teammates the new one');
-      if (ok) lsSet(teamKeyName(gid, side), JSON.stringify(secrets));
+      const plays = await Promise.all(book.docs().map(async (p) => ({ id: p.id, enc: await encryptJSON(secrets.key, await decryptJSON(old.key, p.enc)) })));
+      const ok = await run(() => api('POST', book.lockUrl, { ...book.lockBody, lock, plays, _team: old.proof }), '🔒 Team PIN changed. Tell your teammates the new one');
+      if (ok) lsSet(book.key, JSON.stringify(secrets));
     } catch (e) {
       toast(`Couldn't change it: ${e.message}`, true);
     } finally { render(); }
@@ -2983,6 +3093,7 @@ async function bootFirebase() {
     }
     render();
     ensureRoster();
+    ensureTeams();
     undoEarlyStarts();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach Firebase', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
@@ -3007,6 +3118,7 @@ async function boot() {
     }
     render();
     ensureRoster();
+    ensureTeams();
     undoEarlyStarts();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach the HFL server', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;

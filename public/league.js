@@ -15,6 +15,31 @@ export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'M
 // the new guys listed here: nobody is ever removed again.
 export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'] };
 export const ROSTER_VERSION = 2;
+
+// Season teams. Set up once (settings.teamsVersion); after that league admins edit them in
+// Settings. Games line them up automatically: RSVP in and you're on your team's side.
+export const HFL_TEAMS = [
+  { id: 'giffinland', name: 'Giffinland', color: '#ff5a1f', players: ['Paul', 'Ben', 'Boden', 'Liam', 'Bobby', 'Lucas'] },
+  { id: 'sostreville', name: 'Sostreville', color: '#36c8ff', players: ['Max', 'Henry', 'Kellen', 'Dane', 'Noah', 'Matteo'] },
+];
+export const TEAMS_VERSION = 1;
+export const seasonTeams = (db) => (db.settings.teams || []).filter((t) => t.players?.length);
+export const seasonTeamOf = (db, pid) => seasonTeams(db).find((t) => t.players.includes(pid)) || null;
+// Captain: the highest-rated player on the team (ties: alphabetical).
+export function seasonCaptain(db, team, league = computeLeague(db)) {
+  const name = (id) => db.players.find((p) => p.id === id)?.name || '';
+  return [...(team?.players || [])].filter((id) => db.players.some((p) => p.id === id && p.active !== false))
+    .sort((a, b) => (league.ovr[b] ?? 0) - (league.ovr[a] ?? 0) || name(a).localeCompare(name(b)))[0] || null;
+}
+// Which side of a game a season team plays on.
+const sideOfTeam = (g, tid) => (g.teamIds?.A === tid ? 'A' : g.teamIds?.B === tid ? 'B' : null);
+// Put a player who RSVP'd in on his team's side (scheduled games with season teams only).
+function placeBySeasonTeam(db, g, pid) {
+  const t = seasonTeamOf(db, pid);
+  const side = t && sideOfTeam(g, t.id);
+  if (!side || g.teams.A.includes(pid) || g.teams.B.includes(pid)) return;
+  g.teams[side].push(pid);
+}
 const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8'];
 const FAME_CATEGORIES = ['best', 'dumb', 'drop'];
 const ROUTE_STYLES = ['route', 'motion', 'block'];
@@ -137,10 +162,6 @@ function cleanLock(v) {
   if (!v || v.v !== 1 || typeof v.salt !== 'string' || !B64.test(v.salt) || v.salt.length > 44 || !/^[0-9a-f]{64}$/.test(v.proofHash || '')) throw bad('bad team lock');
   return { v: 1, salt: v.salt, iter: num(v.iter, 50_000, 2_000_000, { name: 'rounds', int: true }), proofHash: v.proofHash };
 }
-const teamProofOk = (g, side, b) => {
-  const lock = g.teamLocks?.[side];
-  return !!lock && typeof b?._team === 'string' && b._team.length < 200 && sha256hex(b._team) === lock.proofHash;
-};
 
 export function cleanPlay(body) {
   const players = Array.isArray(body.players) ? body.players : [];
@@ -267,6 +288,56 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   // that only makes sense with them (their games, posts, plays, Hall of Fame entries),
   // then adds whoever on the roster is missing. Safe to call repeatedly: once the
   // roster version is recorded it does nothing, so players added later are never touched.
+  // One-time: set up the season teams (HFL_TEAMS) by name, and line up any game that
+  // hasn't started yet.
+  on('POST', '/api/setup-teams', (db) => {
+    if ((db.settings.teamsVersion || 0) >= TEAMS_VERSION) return { changed: false };
+    const byName = new Map(db.players.map((p) => [String(p.name || '').trim().toLowerCase(), p.id]));
+    db.settings.teams = HFL_TEAMS.map((t) => ({ id: t.id, name: t.name, color: t.color, season: db.settings.season,
+      players: t.players.map((n) => byName.get(n.toLowerCase())).filter(Boolean) }));
+    db.settings.teamsVersion = TEAMS_VERSION;
+    for (const g of db.games) {
+      if (g.status !== 'scheduled') continue;
+      g.teamIds = { A: db.settings.teams[0].id, B: db.settings.teams[1].id };
+      g.teamNames = { A: db.settings.teams[0].name, B: db.settings.teams[1].name };
+      const placed = new Set([...g.teams.A, ...g.teams.B]);
+      const free = (pid) => !seasonTeamOf(db, pid);
+      // walk-ons with no season team stay where they were; everyone else goes to his team
+      g.teams = { A: g.teams.A.filter(free), B: g.teams.B.filter(free) };
+      for (const pid of db.players.map((p) => p.id)) if (g.rsvps[pid] === 'in' || placed.has(pid)) placeBySeasonTeam(db, g, pid);
+      delete g.prevTeams;
+    }
+    return { changed: true, teams: db.settings.teams.map((t) => t.name) };
+  });
+  // League admins edit the season teams (names, colors, who's on which).
+  on('PUT', '/api/season-teams', (db, b) => {
+    requireCommish(db, b, 'change the season teams');
+    const list = Array.isArray(b.teams) ? b.teams : [];
+    if (list.length !== 2) throw bad('the league has two teams');
+    const seen = new Set();
+    const prev = new Map((db.settings.teams || []).map((t) => [t.id, t]));
+    db.settings.teams = list.map((t, i) => {
+      const id = prev.has(t.id) ? t.id : (t.id && /^[a-z0-9-]{2,24}$/.test(t.id) ? t.id : newId());
+      const players = (Array.isArray(t.players) ? t.players : []).map((pid) => {
+        player(db, pid);
+        if (seen.has(pid)) throw bad('a player can only be on one team');
+        seen.add(pid);
+        return pid;
+      });
+      return { ...(prev.get(id) || {}), id, name: str(t.name, 24, { required: true, name: 'team name' }), color: color(t.color, i ? '#36c8ff' : '#ff5a1f'), season: db.settings.season, players };
+    });
+    // games that haven't started follow the new teams
+    for (const g of db.games) {
+      if (g.status !== 'scheduled' || !g.teamIds) continue;
+      g.teamIds = { A: db.settings.teams[0].id, B: db.settings.teams[1].id };
+      g.teamNames = { A: db.settings.teams[0].name, B: db.settings.teams[1].name };
+      const free = (pid) => !seasonTeamOf(db, pid);
+      const placed = new Set([...g.teams.A, ...g.teams.B]);
+      g.teams = { A: g.teams.A.filter(free), B: g.teams.B.filter(free) };
+      for (const pid of db.players.map((p) => p.id)) if (g.rsvps[pid] === 'in' || placed.has(pid)) placeBySeasonTeam(db, g, pid);
+    }
+    return db.settings.teams;
+  });
   on('POST', '/api/setup-roster', (db, b, params, fx) => {
     const have = db.settings.rosterVersion || 0;
     if (have >= ROSTER_VERSION) return { changed: false };
@@ -413,6 +484,11 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
       teamNames: { A: str(b.teamNames?.A || 'Shirts', 24), B: str(b.teamNames?.B || 'Skins', 24) },
       status: 'scheduled', rsvps: {}, teams: { A: [], B: [] }, events: [], mvpVotes: {}, createdAt: now(),
     };
+    const st = seasonTeams(db);
+    if (st.length === 2) {
+      g.teamIds = { A: st[0].id, B: st[1].id };
+      g.teamNames = { A: st[0].name, B: st[1].name };
+    }
     db.games.push(g);
     return g;
   });
@@ -443,11 +519,19 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     player(db, b.playerId);
     if (b.status === null || b.status === '') delete g.rsvps[b.playerId];
     else g.rsvps[b.playerId] = oneOf(b.status, ['in', 'out'], 'status');
+    if (g.teamIds) {
+      if (g.rsvps[b.playerId] === 'in') placeBySeasonTeam(db, g, b.playerId);
+      else for (const side of ['A', 'B']) g.teams[side] = g.teams[side].filter((x) => x !== b.playerId);
+    }
     return g;
   });
   on('POST', '/api/games/:id/auto-teams', (db, b, { id }) => {
     const g = game(db, id);
     if (g.status !== 'scheduled') throw bad('teams are locked once the game starts');
+    if (g.teamIds) {
+      for (const p of db.players) if (p.active !== false && g.rsvps[p.id] === 'in') placeBySeasonTeam(db, g, p.id);
+      return g;
+    }
     const league = computeLeague(db);
     // Everyone who RSVP'd in, plus anyone already placed on a team (game-day walk-ons).
     const placed = new Set([...g.teams.A, ...g.teams.B]);
@@ -595,46 +679,58 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     db.posts = db.posts.filter((p) => p.id !== id);
   });
 
-  // --- team playbooks (private per game side; see teamlock.js)
-  const canManageTeam = (db, b, g, side) => {
-    const who = whoIsAsking(db, b);
-    return !!who && (isCommish(db, who) || who === teamCaptain(db, g, side));
+  // --- team playbooks (private, encrypted; see teamlock.js). A "book" is a season team's
+  // playbook (teamId), or for games from before season teams, one side of one game.
+  const bookFor = (db, ref) => {
+    if (ref.teamId) {
+      const t = (db.settings.teams || []).find((x) => x.id === ref.teamId);
+      if (!t) throw new HttpError(404, 'team not found');
+      return { lock: t.lock, members: t.players, owns: (p) => p.teamId === t.id, stamp: { teamId: t.id },
+        captain: () => seasonCaptain(db, t), setLock: (l) => { if (l) t.lock = l; else delete t.lock; } };
+    }
+    const g = game(db, ref.gameId);
+    const side = oneOf(ref.side, ['A', 'B'], 'team');
+    return { lock: g.teamLocks?.[side], members: g.teams?.[side] || [], owns: (p) => p.gameId === g.id && p.side === side, stamp: { gameId: g.id, side },
+      captain: () => teamCaptain(db, g, side), setLock: (l) => { g.teamLocks ||= {}; if (l) g.teamLocks[side] = l; else delete g.teamLocks[side]; } };
   };
-  on('POST', '/api/games/:id/team-lock', (db, b, { id }) => {
-    const g = game(db, id);
-    const side = oneOf(b.side, ['A', 'B'], 'team');
-    if (!g.teams?.[side]?.length) throw bad('pick teams first');
-    if (!canManageTeam(db, b, g, side)) throw forbidden("Only this team's captain or a league admin can set the team PIN");
-    const teamPlays = db.plays.filter((p) => p.gameId === g.id && p.side === side);
-    const current = g.teamLocks?.[side];
+  const bookRef = (x) => (x.teamId ? { teamId: x.teamId } : { gameId: x.gameId, side: x.side });
+  const proofOk = (book, b) => !!book.lock && typeof b?._team === 'string' && b._team.length < 200 && sha256hex(b._team) === book.lock.proofHash;
+  const canManageBook = (db, b, book) => {
+    const who = whoIsAsking(db, b);
+    return !!who && (isCommish(db, who) || who === book.captain());
+  };
+  function setBookLock(db, b, book) {
+    if (!book.members.length) throw bad('pick teams first');
+    if (!canManageBook(db, b, book)) throw forbidden("Only this team's captain or a league admin can set the team PIN");
+    const teamPlays = db.plays.filter(book.owns);
     if (b.reset) {
       // forgot the PIN: the old plays can't be unlocked anymore, so they go
-      db.plays = db.plays.filter((p) => !(p.gameId === g.id && p.side === side));
-    } else if (current) {
+      db.plays = db.plays.filter((p) => !book.owns(p));
+    } else if (book.lock) {
       // changing the PIN: needs the old one and every play re-locked with the new one
-      if (!teamProofOk(g, side, b)) throw forbidden('Enter the current team PIN first');
+      if (!proofOk(book, b)) throw forbidden('Enter the current team PIN first');
       const boxes = new Map((Array.isArray(b.plays) ? b.plays : []).map((x) => [x?.id, x?.enc]));
       if (boxes.size !== teamPlays.length || teamPlays.some((p) => !boxes.has(p.id))) throw bad('every team play has to be re-locked with the new PIN');
       for (const p of teamPlays) { p.enc = cleanBox(boxes.get(p.id)); p.updatedAt = now(); }
     }
-    g.teamLocks ||= {};
-    if (b.lock === null) delete g.teamLocks[side];
-    else g.teamLocks[side] = { ...cleanLock(b.lock), setBy: whoIsAsking(db, b), setAt: now() };
+    book.setLock(b.lock === null ? null : { ...cleanLock(b.lock), setBy: whoIsAsking(db, b), setAt: now() });
     return { ok: true };
-  });
+  }
+  on('POST', '/api/games/:id/team-lock', (db, b, { id }) => setBookLock(db, b, bookFor(db, { gameId: id, side: b.side })));
+  on('POST', '/api/season-teams/:tid/lock', (db, b, { tid }) => setBookLock(db, b, bookFor(db, { teamId: tid })));
 
-  // --- playbook (league plays are public; plays with a gameId + side are that team's, encrypted)
-  const teamPlayTarget = (db, b) => {
-    const g = game(db, b.gameId);
-    const side = oneOf(b.side, ['A', 'B'], 'team');
-    if (!g.teamLocks?.[side]) throw bad('set a team PIN first');
-    if (!teamProofOk(g, side, b)) throw forbidden('Wrong or missing team PIN');
-    return { g, side };
+  // --- playbook (league plays are public; plays with a teamId, or a gameId + side, are that
+  // team's and encrypted)
+  const openBook = (db, ref, b) => {
+    const book = bookFor(db, ref);
+    if (!book.lock) throw bad('set a team PIN first');
+    if (!proofOk(book, b)) throw forbidden('Wrong or missing team PIN');
+    return book;
   };
   on('POST', '/api/plays', (db, b) => {
-    if (b.gameId) {
-      const { g, side } = teamPlayTarget(db, b);
-      const play = { id: newId(), gameId: g.id, side, enc: cleanBox(b.enc), authorId: b.authorId || null, createdAt: now(), updatedAt: now() };
+    if (b.teamId || b.gameId) {
+      const book = openBook(db, bookRef(b), b);
+      const play = { id: newId(), ...book.stamp, enc: cleanBox(b.enc), authorId: b.authorId || null, createdAt: now(), updatedAt: now() };
       db.plays.push(play);
       return play;
     }
@@ -644,20 +740,20 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   });
   on('PUT', '/api/plays/:id', (db, b, { id }) => {
     const play = find(db.plays, id, 'play');
-    if (play.gameId) {
-      teamPlayTarget(db, { ...b, gameId: play.gameId, side: play.side });
+    if (play.teamId || play.gameId) {
+      openBook(db, bookRef(play), b);
       Object.assign(play, { enc: cleanBox(b.enc), updatedAt: now() });
       return play;
     }
-    if (b.gameId || b.enc) throw bad("league plays can't be moved into a team playbook; copy them instead");
+    if (b.teamId || b.gameId || b.enc) throw bad("league plays can't be moved into a team playbook; copy them instead");
     Object.assign(play, cleanPlay(b), { updatedAt: now() });
     return play;
   });
   on('DELETE', '/api/plays/:id', (db, b, { id }) => {
     const play = find(db.plays, id, 'play');
-    if (play.gameId) {
-      const g = game(db, play.gameId);
-      if (!teamProofOk(g, play.side, b) && !canManageTeam(db, b, g, play.side)) throw forbidden('Wrong or missing team PIN');
+    if (play.teamId || play.gameId) {
+      const book = bookFor(db, bookRef(play));
+      if (!proofOk(book, b) && !canManageBook(db, b, book)) throw forbidden('Wrong or missing team PIN');
     }
     db.plays = db.plays.filter((p) => p.id !== id);
   });
