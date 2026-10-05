@@ -57,6 +57,6 @@ test('height and weight: admins set them (ratings or profile), players cannot', 
 test('run after catch: a rating that grows with catches and receiving TDs', () => {
   assert.ok(E.ATTR_KEYS.includes('rac'));
   const s = { ...E.blankStats(), rec: 4, recTD: 1, targets: 4 };
-  assert.ok(E.progression(s, 0.5, 0.5).rac > 0.5);
+  assert.ok(E.progression(s, 0.5, 0.5).rac > 0.15);
   assert.ok(E.keyAttrs('WR', 6).includes('rac'));
 });

@@ -181,9 +181,9 @@ test('Madden OVR: same player rates differently by position', () => {
 test('progression: catches build CTH, drops cost it, picks build coverage, gains slow near 99', () => {
   const s = (o) => ({ ...E.blankStats(), ...o });
   const even = [0.5, 0.5];
-  assert.ok(E.progression(s({ rec: 5, targets: 5 }), ...even).cth > 1);
-  assert.ok(E.progression(s({ drops: 3, targets: 3 }), ...even).cth < -1);
-  assert.ok(E.progression(s({ defInt: 2 }), ...even).mcv > 1);
+  assert.ok(E.progression(s({ rec: 5, targets: 5 }), ...even).cth > 0.35);
+  assert.ok(E.progression(s({ drops: 3, targets: 3 }), ...even).cth < -0.3);
+  assert.ok(E.progression(s({ defInt: 2 }), ...even).mcv > 0.35);
   const qb = E.progression(s({ att: 10, comp: 3, intThrown: 3 }), ...even);
   assert.ok(qb.tha < 0, 'picks and misses hurt accuracy');
   const dropsNotOnQb = E.progression(s({ att: 5, comp: 2, dropped: 3 }), ...even);
@@ -230,6 +230,23 @@ test('new ratings (ACC, RLS) follow SPD / RTE for players rated before they exis
 
 test('progression: catches build release, rushing TDs build acceleration', () => {
   const s = (o) => ({ ...E.blankStats(), ...o });
-  assert.ok(E.progression(s({ rec: 4, recTD: 1 }), 0.5, 0.5).rls > 0.5);
-  assert.ok(E.progression(s({ rushTD: 2 }), 0.5, 0.5).acc > 0.5);
+  assert.ok(E.progression(s({ rec: 4, recTD: 1 }), 0.5, 0.5).rls > 0.15);
+  assert.ok(E.progression(s({ rushTD: 2 }), 0.5, 0.5).acc > 0.15);
+});
+
+test('progression: one game nudges ratings, it takes a run of games to really move them', () => {
+  const base = Object.fromEntries(E.ATTR_KEYS.map((k) => [k, 75]));
+  const ovrMove = (line, actual, expected, pos) => {
+    const d = E.progression({ ...E.blankStats(), ...line }, actual, expected, base);
+    return E.overallExact(Object.fromEntries(E.ATTR_KEYS.map((k) => [k, base[k] + d[k]])), pos) - E.overallExact(base, pos);
+  };
+  // a monster game in an upset blowout: well under one OVR point
+  assert.ok(ovrMove({ rec: 8, targets: 8, recTD: 4 }, 1.25, 0.2, 'WR') < 1);
+  assert.ok(ovrMove({ att: 15, comp: 3, intThrown: 4 }, -0.25, 0.8, 'QB') > -1);
+  // a quiet game barely registers
+  assert.ok(Math.abs(ovrMove({}, 1, 0.5, 'ATH')) < 0.25);
+  assert.ok(Math.abs(ovrMove({}, 0, 0.5, 'ATH')) < 0.25);
+  // no single rating jumps more than about half a point in a game
+  const d = E.progression({ ...E.blankStats(), rec: 10, targets: 10, recTD: 5, rushTD: 3, defInt: 3, defTD: 2, sacks: 4 }, 1.25, 0.2, base);
+  for (const k of E.ATTR_KEYS) assert.ok(d[k] <= 0.9, `${k} ${d[k]}`);
 });

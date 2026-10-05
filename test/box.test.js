@@ -33,7 +33,7 @@ test('box score: ratings, MVP math and records work from typed stats', () => {
     box: { wa: { rec: 6, recTD: 3 }, qa: { comp: 6, att: 8, passTD: 3 } } };
   const league = E.computeLeague({ players, games: [g] });
   assert.equal(league.games.g1.summary.score.A, 18);
-  assert.ok(league.ovr.wa > 70, 'the guy with 3 TD catches went up');
+  assert.ok(league.elo.wa > E.ovrToElo(70), 'the guy with 3 TD catches went up');
   const table = E.seasonTable({ players, games: [g] }, league, '2026');
   assert.equal(table.wa.recTD, 3);
   assert.equal(table.wa.w, 1);

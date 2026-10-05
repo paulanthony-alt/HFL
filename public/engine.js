@@ -245,6 +245,10 @@ export const sortGames = (games) => [...games].sort((a, b) => (gameSortKey(a) < 
 // Madden-style progression: how one game moves each rating. Gains get harder near
 // the top (diminishing returns), losses don't, and every rating nudges up or down a
 // little depending on whether your team beat the odds.
+// How fast ratings move. Each game nudges them; it takes a run of good (or bad) games to
+// really move a player. stat: how much a stat line counts; result: winning or losing vs the odds.
+export const PROGRESSION_RATE = { stat: 0.35, result: 0.35 };
+
 export function progression(s, actual, expected, current = {}) {
   const incompletions = Math.max(0, s.att - s.comp - s.intThrown - s.dropped); // drops aren't on the QB
   const d = {
@@ -267,9 +271,9 @@ export function progression(s, actual, expected, current = {}) {
     car: clamp((s.rec + s.rushTD + s.defInt) * 0.1, 0, 0.8),
     rac: clamp(s.recTD * 0.5 + s.rec * 0.1, 0, 1), // catching it and taking it to the house
   };
-  const result = (actual - expected) * 1.2;
+  const result = (actual - expected) * 1.2 * PROGRESSION_RATE.result;
   for (const k of ATTR_KEYS) {
-    let v = d[k] + result;
+    let v = d[k] * PROGRESSION_RATE.stat + result;
     if (v > 0) v *= clamp((ATTR_MAX - (current[k] ?? 70)) / 30, 0.1, 1);
     d[k] = Math.round(v * 100) / 100;
   }
