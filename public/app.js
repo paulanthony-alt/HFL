@@ -250,6 +250,7 @@ document.addEventListener('focusout', () => setTimeout(() => {
 const ROUTES = [
   [/^#\/?$/, viewHome, 'game'],
   [/^#\/g\/([\w-]+)$/, viewGame, 'game'],
+  [/^#\/g\/([\w-]+)\/stats$/, viewBoxEntry, 'game'],
   [/^#\/new-game$/, viewNewGame, 'game'],
   [/^#\/stats$/, viewStats, 'stats'],
   [/^#\/cards$/, viewCards, 'cards'],
@@ -826,18 +827,100 @@ function viewCast(q) {
   return '<div id="cast-root"></div>';
 }
 
+// ---------------------------------------------------------------------------
+// Typed-in stats (box score) instead of play-by-play. See engine.BOX_FIELDS.
+
+function boxModeCard(g) {
+  return `
+    <section class="card box-mode">
+      <div class="row-between"><h3>⌨️ Stats typed in</h3><a class="btn sm hot" href="#/g/${g.id}/stats">Edit stats</a></div>
+      <p class="muted small">This game's stats were typed in as totals instead of logged play by play${g.boxBy ? ` (last by ${h(nick(g.boxBy))})` : ''}. Score, ratings and awards all come from them.</p>
+    </section>`;
+}
+
+// Prefill: the typed box if there is one, else whatever the play-by-play adds up to.
+function boxStart(g) {
+  if (g.box) return g.box;
+  const { stats } = E.summarizeGame({ ...g, box: undefined });
+  return Object.fromEntries(Object.entries(stats).map(([pid, s]) => [pid, Object.fromEntries(E.BOX_KEYS.map((k) => [k, s[k] || 0]))]));
+}
+
+function viewBoxEntry(id) {
+  const g = S.db.games.find((x) => x.id === id);
+  if (!g) return `<p class="muted">Game not found. <a href="#/">Back</a></p>`;
+  if (g.status === 'scheduled') return `<a class="back" href="#/g/${g.id}">‹ Game</a><section class="card">${empty({ art: 'whistle', title: 'Not started yet', text: 'Start the game first, then you can type in everyone\'s stats.' })}</section>`;
+  const start = boxStart(g);
+  const groups = [...new Set(E.BOX_FIELDS.map((f) => f.group))];
+  const field = (pid, f) => `<label class="bx-f"><span>${h(f.short)}</span><input type="number" inputmode="numeric" min="0" max="99" name="${pid}.${f.key}" value="${start[pid]?.[f.key] || ''}" placeholder="0" data-ch="box" aria-label="${h(nick(pid))} ${h(f.label)}"></label>`;
+  const row = (pid) => `
+    <details class="bx-row" ${Object.values(start[pid] || {}).some(Boolean) ? 'open' : ''}>
+      <summary>${avatar(pid, 'xs')}<b>${h(nick(pid))}</b><span class="bx-line muted small" data-bx-line="${pid}"></span></summary>
+      ${groups.map((gr) => `<div class="bx-group"><div class="bx-gl">${gr}</div><div class="bx-fields">${E.BOX_FIELDS.filter((f) => f.group === gr).map((f) => field(pid, f)).join('')}</div></div>`).join('')}
+    </details>`;
+  S.after = () => refreshBoxForm($('form[data-f=box]'));
+  return `
+    <a class="back" href="#/g/${g.id}">‹ Game</a>
+    ${pageHead(`${h(teamName(g, 'A'))} vs ${h(teamName(g, 'B'))}`, 'Type in the stats')}
+    <p class="muted">No play-by-play needed: just enter each guy's totals for the game. Touchdowns make the score (6 each). Leave a box empty for 0.${g.events.length && !g.box ? ` <b>Filled in from the ${g.events.length} plays already logged.</b>` : ''}</p>
+    <form class="form box-form" data-f="box" data-g="${g.id}">
+      <div class="bx-score"><span class="t-A">${h(teamName(g, 'A'))} <b data-bx-score="A">0</b></span><span class="muted small">score from TDs</span><span class="t-B"><b data-bx-score="B">0</b> ${h(teamName(g, 'B'))}</span></div>
+      ${['A', 'B'].map((side) => `
+        <div class="bx-team t-${side}">${h(teamName(g, side))}</div>
+        ${g.teams[side].map(row).join('')}`).join('')}
+      <p class="bx-warn small" hidden></p>
+      <button class="btn hot block">💾 Save stats</button>
+      ${g.box ? `<button type="button" class="btn ghost block" data-a="box-clear" data-g="${g.id}">Go back to play-by-play${g.events.length ? ` (${g.events.length} logged plays)` : ''}</button>` : ''}
+    </form>`;
+}
+
+function readBoxForm(form) {
+  const box = {};
+  for (const el of form.querySelectorAll('input[data-ch=box]')) {
+    const [pid, k] = el.name.split('.');
+    (box[pid] ||= {})[k] = Number(el.value) || 0;
+  }
+  return box;
+}
+
+// Live score + each player's stat line while typing, and a heads-up when TD passes and TD
+// catches don't add up on a team.
+function refreshBoxForm(form) {
+  if (!form) return;
+  const g = S.db.games.find((x) => x.id === form.dataset.g);
+  const box = readBoxForm(form);
+  for (const side of ['A', 'B']) {
+    const score = g.teams[side].reduce((t, pid) => t + E.boxPoints(box[pid] || {}), 0);
+    form.querySelector(`[data-bx-score="${side}"]`).textContent = score;
+  }
+  for (const [pid, line] of Object.entries(box)) {
+    const el = form.querySelector(`[data-bx-line="${pid}"]`);
+    if (el) el.textContent = Object.values(line).some(Boolean) ? statLine({ ...E.blankStats(), ...E.normalizeBoxLine(line) }).replace(/ 🧈/, '') : '';
+  }
+  const warn = ['A', 'B'].map((side) => {
+    const sum = (k) => g.teams[side].reduce((t, pid) => t + (Number(box[pid]?.[k]) || 0), 0);
+    return sum('passTD') !== sum('recTD') ? `${teamName(g, side)}: ${sum('passTD')} TD pass${sum('passTD') === 1 ? '' : 'es'} but ${sum('recTD')} TD catch${sum('recTD') === 1 ? '' : 'es'}. Only catches, runs and pick sixes count toward the score.` : '';
+  }).filter(Boolean);
+  const w = form.querySelector('.bx-warn');
+  w.hidden = !warn.length;
+  w.textContent = warn.join(' ');
+}
+
 function liveSection(g) {
   const info = gameInfo(g);
   const events = [...g.events].reverse();
   return `
     ${scoreboard(g)}
     ${clockBar(g)}
-    ${momentumChart(g)}
-    <div class="muted small center">📝 Everyone keeps score: log any play you see, including your own.</div>
-    ${logger(g)}
-    ${sec('Play by play', `<span class="sec-link muted">${events.length} logged</span>`)}
-    ${events.length ? `<ul class="feed">${events.map((ev) => eventRow(g, ev, true)).join('')}</ul>` : `<div class="empty-inline">${ART.whistle}<span>No plays logged yet. Pick a play type above to start.</span></div>`}
-    <details class="card-lite"><summary>Rosters & live box score</summary>${boxScore(g, info)}</details>
+    ${g.box ? `
+      ${boxModeCard(g)}
+      ${sec('Box score')}
+      ${boxScore(g, info)}` : `
+      ${momentumChart(g)}
+      <div class="muted small center">📝 Everyone keeps score: log any play you see, including your own. <a href="#/g/${g.id}/stats">Rather just type in the stats? ›</a></div>
+      ${logger(g)}
+      ${sec('Play by play', `<span class="sec-link muted">${events.length} logged</span>`)}
+      ${events.length ? `<ul class="feed">${events.map((ev) => eventRow(g, ev, true)).join('')}</ul>` : `<div class="empty-inline">${ART.whistle}<span>No plays logged yet. Pick a play type above to start.</span></div>`}
+      <details class="card-lite"><summary>Rosters & live box score</summary>${boxScore(g, info)}</details>`}
     <button class="btn block danger-outline" data-a="final" data-g="${g.id}">Final whistle</button>`;
 }
 
@@ -1010,6 +1093,7 @@ function finalSection(g) {
     ${sec('Box score')}
     ${boxScore(g, info)}
     <p class="muted small">▲▼ = OVR change from this game (result vs. the odds, plus how much he balled out).</p>
+    ${g.box ? boxModeCard(g) : `
     <details class="card-lite"><summary>Play by play (${g.events.length})</summary>
       <ul class="feed">${[...g.events].reverse().map((ev) => eventRow(g, ev, !!me() && ev.by === me())).join('')}</ul>
     </details>
@@ -1017,6 +1101,7 @@ function finalSection(g) {
       <p class="muted small">Forgot to log something? Add it here. Stats, ratings and awards update automatically.</p>
       ${logger(g)}
     </details>
+    <a class="btn block ghost" href="#/g/${g.id}/stats">⌨️ Type in the stats instead</a>`}
     <a class="btn block" href="#/wall">Talk trash about this one ›</a>`;
 }
 
@@ -2498,6 +2583,10 @@ const A = {
   },
   'voice-start': ({ g }) => voiceStart(g),
   'rule-edit': ({ r }) => { S.ruleEdit = r; render(); },
+  'box-clear': ({ g }) => {
+    if (!confirm('Throw away the typed-in stats and go back to play-by-play?')) return;
+    run(async () => { await api('PUT', `/api/games/${g}/box`, { box: null }); location.hash = `#/g/${g}`; }, 'Back to play-by-play');
+  },
   'team-forget': ({ g, side }) => { lsSet(teamKeyName(g, side), ''); toast('🔒 Locked on this phone'); render(); },
   'team-reset': ({ g, side }) => {
     const game = S.db.games.find((x) => x.id === g);
@@ -2604,6 +2693,7 @@ const CHANGE = {
   rate: (el) => refreshRateRow(el.closest('.rate-row')),
   'rate-pos': (el) => refreshRateRow(el.closest('.rate-row')),
   'rate-bio': (el) => refreshRateRow(el.closest('.rate-row')),
+  box: (el) => refreshBoxForm(el.closest('form')),
   'rate-all': (el) => {
     const row = el.closest('.rate-row');
     row.querySelectorAll('input[data-attr]').forEach((i) => { i.value = el.value; });
@@ -2688,6 +2778,11 @@ const FORMS = {
     } catch (e) {
       toast(`Couldn't change it: ${e.message}`, true);
     } finally { render(); }
+  },
+  box: async (d, form) => {
+    const gid = form.dataset.g;
+    const saved = await run(() => api('PUT', `/api/games/${gid}/box`, { box: readBoxForm(form), by: me() }), '💾 Stats saved. Score, ratings and awards updated');
+    if (saved) location.hash = `#/g/${gid}`;
   },
   rule: async (d, form) => {
     const id = form.dataset.id;
@@ -2815,7 +2910,7 @@ document.addEventListener('change', (e) => {
   if (el && CHANGE[el.dataset.ch]) CHANGE[el.dataset.ch](el);
 });
 document.addEventListener('input', (e) => {
-  const el = e.target.closest('[data-ch="range-out"], [data-ch="rate"], [data-ch="rate-all"]');
+  const el = e.target.closest('[data-ch="range-out"], [data-ch="rate"], [data-ch="rate-all"], [data-ch="box"]');
   if (el) CHANGE[el.dataset.ch](el);
 });
 document.addEventListener('submit', (e) => {

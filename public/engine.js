@@ -165,7 +165,54 @@ export function teamOf(game, playerId) {
 }
 
 // Score, per-player stat lines and result for one game.
+// Typed-in box score: instead of logging every play, the crew enters each player's totals
+// (game.box = { playerId: { comp, att, passTD, ... } }). When a game has one, its stats and
+// score come from it and the play-by-play is ignored.
+export const BOX_FIELDS = [
+  { key: 'comp', label: 'Completions', short: 'Comp', group: 'Passing' },
+  { key: 'att', label: 'Pass attempts', short: 'Att', group: 'Passing' },
+  { key: 'passTD', label: 'TD passes', short: 'TD', group: 'Passing' },
+  { key: 'intThrown', label: 'Picks thrown', short: 'INT', group: 'Passing' },
+  { key: 'rec', label: 'Catches', short: 'Rec', group: 'Receiving' },
+  { key: 'recTD', label: 'TD catches', short: 'TD', group: 'Receiving' },
+  { key: 'drops', label: 'Drops', short: 'Drop', group: 'Receiving' },
+  { key: 'rushTD', label: 'TD runs', short: 'TD', group: 'Running' },
+  { key: 'defInt', label: 'Interceptions', short: 'INT', group: 'Defense' },
+  { key: 'defTD', label: 'Pick sixes', short: 'Pick 6', group: 'Defense' },
+  { key: 'sacks', label: 'Sacks', short: 'Sack', group: 'Defense' },
+];
+export const BOX_KEYS = BOX_FIELDS.map((f) => f.key);
+
+// Make one player's typed totals consistent (a TD pass is also a completion and an attempt,
+// a pick six is also an interception...) instead of rejecting them.
+export function normalizeBoxLine(line = {}) {
+  const v = Object.fromEntries(BOX_KEYS.map((k) => [k, Math.max(0, Math.min(99, Math.floor(Number(line[k]) || 0)))]));
+  v.comp = Math.max(v.comp, v.passTD);
+  v.att = Math.max(v.att, v.comp + v.intThrown);
+  v.rec = Math.max(v.rec, v.recTD);
+  v.defInt = Math.max(v.defInt, v.defTD);
+  return v;
+}
+function boxStats(line) {
+  const v = normalizeBoxLine(line);
+  return { ...blankStats(), ...v, targets: v.rec + v.drops };
+}
+export const boxPoints = (line) => { const v = normalizeBoxLine(line); return 6 * (v.recTD + v.rushTD + v.defTD); };
+
 export function summarizeGame(game) {
+  if (game.box) {
+    const stats = {};
+    const score = { A: 0, B: 0 };
+    for (const side of ['A', 'B']) {
+      for (const pid of game.teams?.[side] || []) {
+        stats[pid] = boxStats(game.box[pid]);
+        score[side] += boxPoints(game.box[pid]);
+      }
+    }
+    let winner = null;
+    if (game.status === 'final') winner = score.A > score.B ? 'A' : score.B > score.A ? 'B' : 'tie';
+    return { score, stats, winner };
+  }
   const stats = {};
   const statFor = (id) => (stats[id] ||= blankStats());
   const score = { A: 0, B: 0 };

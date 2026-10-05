@@ -1,6 +1,6 @@
 // League rules: validation and every change the app can make, shared by the Node
 // server (server.js) and the Firebase backend that runs in the browser.
-import { EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
+import { BOX_KEYS, normalizeBoxLine, EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
 import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
 import { applyClock, CLOCK_ACTIONS } from './clock.js';
@@ -505,6 +505,25 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     const g = game(db, id);
     if (g.status !== 'final') throw bad('game is not final');
     g.status = 'live';
+    return g;
+  });
+  // Typed-in box score (engine.BOX_FIELDS): totals per player instead of play-by-play.
+  // box: null switches the game back to play-by-play.
+  on('PUT', '/api/games/:id/box', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status === 'scheduled') throw bad('start the game first');
+    if (b.box === null) { delete g.box; return g; }
+    if (!b.box || typeof b.box !== 'object' || Array.isArray(b.box)) throw bad('no stats to save');
+    const onTeam = new Set([...g.teams.A, ...g.teams.B]);
+    const box = {};
+    for (const [pid, line] of Object.entries(b.box)) {
+      if (!onTeam.has(pid)) throw bad('stats for someone who isn’t in this game');
+      if (line && typeof line === 'object' && Object.keys(line).some((k) => !BOX_KEYS.includes(k))) throw bad('unknown stat');
+      const v = normalizeBoxLine(line || {});
+      if (Object.values(v).some(Boolean)) box[pid] = v;
+    }
+    g.box = box;
+    g.boxBy = b.by || null;
     return g;
   });
   // Optional game clock (see clock.js). Only game.clock changes; plays are untouched.

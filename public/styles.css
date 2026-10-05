@@ -1373,3 +1373,20 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .tb-count b { color: var(--text); font: 900 20px/1 var(--display); }
 .tb-status { font: 700 13px/1.2 var(--label); letter-spacing: 0.04em; color: var(--text-2); }
 .copy-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+
+/* ---------- typed-in stats (box score) ---------- */
+.box-form { gap: 10px; }
+.bx-score { position: sticky; top: calc(env(safe-area-inset-top) + 64px); z-index: 4; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--r); background: rgba(16, 21, 28, 0.94); border: 1px solid var(--line-2); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); font: 800 16px/1 var(--label); text-transform: uppercase; letter-spacing: 0.04em; }
+.bx-score b { font: 900 34px/1 var(--display); color: var(--text); margin: 0 4px; }
+.bx-team { margin-top: 10px; font: 900 24px/1 var(--display); text-transform: uppercase; }
+.bx-row { border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); }
+.bx-row summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; }
+.bx-row summary::-webkit-details-marker { display: none; }
+.bx-row summary b { flex: none; }
+.bx-line { flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bx-group { padding: 0 12px 10px; }
+.bx-gl { font: 700 11px/1 var(--label); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.bx-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.bx-f { display: grid; gap: 4px; font: 700 11.5px/1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+.bx-f input { min-height: 44px; text-align: center; font: 800 20px/1 var(--display); padding: 6px 4px; }
+.bx-warn { margin: 0; color: var(--gold); }
