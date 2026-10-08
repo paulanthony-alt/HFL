@@ -1,0 +1,817 @@
+// League rules: validation and every change the app can make, shared by the Node
+// server (server.js) and the Firebase backend that runs in the browser.
+import { BOX_KEYS, normalizeBoxLine, EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
+import { buildDemo } from './demo.js';
+import { DESIGN_KEYS } from './awards.js';
+import { applyClock, CLOCK_ACTIONS } from './clock.js';
+import { sha256hex } from './sha256.js';
+
+const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
+
+// The HFL crew. The first time the app opens a league without this roster
+// (settings.rosterVersion), it clears out everyone else and adds these guys.
+export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah'];
+// Version 1 set up the original crew (and cleared everyone else). Later versions only add
+// the new guys listed here: nobody is ever removed again.
+export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'] };
+export const ROSTER_VERSION = 2;
+
+// Season teams. Set up once (settings.teamsVersion); after that league admins edit them in
+// Settings. Games line them up automatically: RSVP in and you're on your team's side.
+export const HFL_TEAMS = [
+  { id: 'giffinland', name: 'Giffinland', color: '#ff5a1f', players: ['Paul', 'Ben', 'Boden', 'Liam', 'Bobby', 'Lucas'] },
+  { id: 'sostreville', name: 'Sostreville', color: '#36c8ff', players: ['Max', 'Henry', 'Kellen', 'Dane', 'Noah', 'Matteo'] },
+];
+export const TEAMS_VERSION = 1;
+export const seasonTeams = (db) => (db.settings.teams || []).filter((t) => t.players?.length);
+export const seasonTeamOf = (db, pid) => seasonTeams(db).find((t) => t.players.includes(pid)) || null;
+// Captain: the highest-rated player on the team (ties: alphabetical).
+export function seasonCaptain(db, team, league = computeLeague(db)) {
+  const name = (id) => db.players.find((p) => p.id === id)?.name || '';
+  return [...(team?.players || [])].filter((id) => db.players.some((p) => p.id === id && p.active !== false))
+    .sort((a, b) => (league.ovr[b] ?? 0) - (league.ovr[a] ?? 0) || name(a).localeCompare(name(b)))[0] || null;
+}
+// Which side of a game a season team plays on.
+const sideOfTeam = (g, tid) => (g.teamIds?.A === tid ? 'A' : g.teamIds?.B === tid ? 'B' : null);
+// Put a player who RSVP'd in on his team's side (scheduled games with season teams only).
+function placeBySeasonTeam(db, g, pid) {
+  const t = seasonTeamOf(db, pid);
+  const side = t && sideOfTeam(g, t.id);
+  if (!side || g.teams.A.includes(pid) || g.teams.B.includes(pid)) return;
+  g.teams[side].push(pid);
+}
+const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8'];
+const FAME_CATEGORIES = ['best', 'dumb', 'drop'];
+const ROUTE_STYLES = ['route', 'motion', 'block'];
+
+export class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+export const bad = (msg) => new HttpError(400, msg);
+const forbidden = (msg) => new HttpError(403, msg);
+
+// ---------------------------------------------------------------------------
+// Who's asking. Every request can carry _auth: { as: playerId, pinHash }, where pinHash is
+// sha256("hfl|<playerId>|<PIN>") worked out on the phone. The league admins are whoever
+// settings.commissionerIds names, plus the players called Paul, Max and Henry.
+export const ADMIN_NAMES = ['paul', 'max', 'henry'];
+export function commissionerIds(db) {
+  const named = db.players.filter((p) => ADMIN_NAMES.includes(String(p.name || '').trim().toLowerCase())).map((p) => p.id);
+  return [...new Set([...(db.settings?.commissionerIds || []), db.settings?.commissionerId, ...named].filter(Boolean))];
+}
+export const commissionerId = (db) => commissionerIds(db)[0] || null;
+export function whoIsAsking(db, b) {
+  const a = b?._auth;
+  if (!a?.as || !a?.pinHash) return null;
+  const p = db.players.find((x) => x.id === a.as);
+  return p?.pinHash && p.pinHash === a.pinHash ? p.id : null;
+}
+const isCommish = (db, id) => !!id && commissionerIds(db).includes(id);
+function requireCommish(db, b, what) {
+  if (!isCommish(db, whoIsAsking(db, b))) throw forbidden(`That's locked: you can't ${what}`);
+}
+function requireSelfOrCommish(db, b, targetId, what) {
+  const who = whoIsAsking(db, b);
+  if (who === targetId || isCommish(db, who)) return;
+  throw forbidden(who ? `Only ${db.players.find((p) => p.id === targetId)?.name || 'that player'} can ${what}` : `Enter your PIN to ${what}`);
+}
+// Profile stuff a player controls himself; everything else on a player is commissioner-only.
+const SELF_FIELDS = ['nickname', 'number', 'emoji', 'color', 'cardStyle'];
+const PIN_HASH = /^[0-9a-f]{64}$/;
+export const newId = () => {
+  const b = crypto.getRandomValues(new Uint8Array(6));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
+};
+const now = () => new Date().toISOString();
+export const MAX_IMAGE_BYTES = 700 * 1024; // fits in one Firestore document with room to spare
+
+export function emptyDb() {
+  return {
+    version: 0,
+    settings: { crewName: 'HFL', season: String(new Date().getFullYear()) },
+    players: [], games: [], posts: [], plays: [], fame: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+
+export function str(v, max, { required = false, name = 'field' } = {}) {
+  if (v === undefined || v === null) v = '';
+  if (typeof v !== 'string' && typeof v !== 'number') throw bad(`${name} must be text`);
+  const s = String(v).trim();
+  if (required && !s) throw bad(`${name} is required`);
+  if (s.length > max) throw bad(`${name} is too long (max ${max})`);
+  return s;
+}
+function num(v, lo, hi, { name = 'number', int = false } = {}) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < lo || n > hi) throw bad(`${name} must be between ${lo} and ${hi}`);
+  return int ? Math.round(n) : Math.round(n * 10) / 10;
+}
+function oneOf(v, list, name) {
+  if (!list.includes(v)) throw bad(`${name} must be one of ${list.join(', ')}`);
+  return v;
+}
+const color = (v, fallback) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback);
+function find(list, id, what) {
+  const item = list.find((x) => x.id === id);
+  if (!item) throw new HttpError(404, `${what} not found`);
+  return item;
+}
+const player = (db, id, name = 'player') => {
+  if (!id) throw bad(`${name} is required`);
+  return find(db.players, id, name);
+};
+
+// Height in inches (4'0" to 8'0") and weight in pounds; empty clears them.
+const blank = (v) => v === '' || v === null || v === undefined;
+const cleanHeight = (v) => (blank(v) ? null : num(v, 48, 96, { name: 'height (inches)', int: true }));
+const cleanWeight = (v) => (blank(v) ? null : num(v, 60, 400, { name: 'weight (lbs)', int: true }));
+
+function cleanPlayer(body, existing = {}) {
+  const p = { ...existing };
+  if ('name' in body || !existing.id) p.name = str(body.name, 40, { required: true, name: 'name' });
+  if ('nickname' in body) p.nickname = str(body.nickname, 40, { name: 'nickname' });
+  if ('number' in body) p.number = body.number === '' || body.number === null ? '' : num(body.number, 0, 99, { name: 'jersey number', int: true });
+  if ('position' in body) p.position = oneOf(body.position, POSITIONS, 'position');
+  if ('startOvr' in body) p.startOvr = num(body.startOvr, ATTR_MIN, ATTR_MAX, { name: 'starting level', int: true });
+  if ('emoji' in body) p.emoji = str(body.emoji, 16, { name: 'emoji' });
+  if ('color' in body) p.color = color(body.color, existing.color || '#ff6b1a');
+  if ('active' in body) p.active = !!body.active;
+  if ('cardStyle' in body) p.cardStyle = oneOf(body.cardStyle || '', DESIGN_KEYS, 'card design');
+  if ('heightIn' in body) p.heightIn = cleanHeight(body.heightIn);
+  if ('weightLb' in body) p.weightLb = cleanWeight(body.weightLb);
+  return p;
+}
+
+// Team captain: the highest-rated player on that side of that game (ties: alphabetical).
+export function teamCaptain(db, g, side, league = computeLeague(db)) {
+  const ids = g?.teams?.[side] || [];
+  const name = (id) => db.players.find((p) => p.id === id)?.name || '';
+  return [...ids].sort((a, b) => (league.ovr[b] ?? 0) - (league.ovr[a] ?? 0) || name(a).localeCompare(name(b)))[0] || null;
+}
+
+// Encrypted team plays (see teamlock.js): the league only checks the shape.
+const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
+function cleanBox(v) {
+  if (!v || typeof v.iv !== 'string' || typeof v.ct !== 'string' || !B64.test(v.iv) || !B64.test(v.ct) || v.iv.length !== 16 || v.ct.length > 200_000) throw bad('bad encrypted play');
+  return { iv: v.iv, ct: v.ct };
+}
+function cleanLock(v) {
+  if (!v || v.v !== 1 || typeof v.salt !== 'string' || !B64.test(v.salt) || v.salt.length > 44 || !/^[0-9a-f]{64}$/.test(v.proofHash || '')) throw bad('bad team lock');
+  return { v: 1, salt: v.salt, iter: num(v.iter, 50_000, 2_000_000, { name: 'rounds', int: true }), proofHash: v.proofHash };
+}
+
+export function cleanPlay(body) {
+  const players = Array.isArray(body.players) ? body.players : [];
+  const routes = Array.isArray(body.routes) ? body.routes : [];
+  if (players.length > 14) throw bad('too many players on the field');
+  if (routes.length > 30) throw bad('too many routes');
+  const cleanPlayers = players.map((p) => ({
+    id: str(p.id, 16, { required: true, name: 'player id' }),
+    label: str(p.label, 4, { name: 'label' }),
+    side: oneOf(p.side, ['O', 'D'], 'side'),
+    x: num(p.x, 0, 100, { name: 'x' }),
+    y: num(p.y, 0, 120, { name: 'y' }),
+    color: color(p.color, '#ffffff'),
+  }));
+  const ids = new Set(cleanPlayers.map((p) => p.id));
+  const cleanRoutes = routes.map((r) => {
+    if (!ids.has(r.pid)) throw bad('route belongs to a missing player');
+    const pts = Array.isArray(r.points) ? r.points : [];
+    if (pts.length < 2 || pts.length > 80) throw bad('route needs 2–80 points');
+    return {
+      id: str(r.id || newId(), 16, { name: 'route id' }),
+      pid: r.pid,
+      style: oneOf(r.style, ROUTE_STYLES, 'route style'),
+      points: pts.map((pt) => [num(pt?.[0], 0, 100, { name: 'x' }), num(pt?.[1], 0, 120, { name: 'y' })]),
+    };
+  });
+  return {
+    name: str(body.name, 60, { required: true, name: 'play name' }),
+    notes: str(body.notes, 600, { name: 'notes' }),
+    formation: str(body.formation, 20, { name: 'formation' }),
+    players: cleanPlayers,
+    routes: cleanRoutes,
+  };
+}
+
+function checkTeams(db, teams) {
+  const A = Array.isArray(teams?.A) ? teams.A : [];
+  const B = Array.isArray(teams?.B) ? teams.B : [];
+  const seen = new Set();
+  for (const id of [...A, ...B]) {
+    player(db, id);
+    if (seen.has(id)) throw bad('a player cannot be on both teams');
+    seen.add(id);
+  }
+  return { A, B };
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+
+// Every change to the league is one of these routes. Handlers are synchronous and
+// work on a draft copy of the whole league; whoever runs them (the Node server or
+// the Firebase backend in the browser) saves the draft only if the handler succeeds.
+// Photo uploads and deletions are queued in fx.images for the backend to carry out.
+// imageUrl turns a stored photo's file name into something an <img> can show.
+export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
+  const routes = [];
+  const on = (method, pattern, handler) => {
+    const keys = [];
+    const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '$');
+    routes.push({ method, re, keys, handler });
+  };
+
+  const game = (db, id) => find(db.games, id, 'game');
+
+  // --- settings / backup
+  on('PATCH', '/api/settings', (db, b) => {
+    if ('crewName' in b) db.settings.crewName = str(b.crewName, 30, { required: true, name: 'crew name' });
+    if ('season' in b) db.settings.season = str(b.season, 20, { required: true, name: 'season' });
+  });
+  // League rules (settings.rules): everyone reads them, only league admins edit.
+  const rules = (db) => (db.settings.rules ||= []);
+  const cleanRule = (b, r = {}) => ({
+    ...r,
+    title: 'title' in b || !r.id ? str(b.title, 80, { required: true, name: 'rule title' }) : r.title,
+    text: 'text' in b || !r.id ? str(b.text, 2000, { name: 'rule text' }) : r.text,
+    updatedAt: now(),
+  });
+  on('POST', '/api/rules', (db, b) => {
+    requireCommish(db, b, 'change the rules');
+    if (rules(db).length >= 100) throw bad('that is a lot of rules');
+    const r = { id: newId(), ...cleanRule(b) };
+    rules(db).push(r);
+    return r;
+  });
+  on('PATCH', '/api/rules/:rid', (db, b, { rid }) => {
+    requireCommish(db, b, 'change the rules');
+    const i = rules(db).findIndex((r) => r.id === rid);
+    if (i < 0) throw new HttpError(404, 'rule not found');
+    db.settings.rules[i] = cleanRule(b, db.settings.rules[i]);
+    return db.settings.rules[i];
+  });
+  on('DELETE', '/api/rules/:rid', (db, b, { rid }) => {
+    requireCommish(db, b, 'change the rules');
+    if (!rules(db).some((r) => r.id === rid)) throw new HttpError(404, 'rule not found');
+    db.settings.rules = db.settings.rules.filter((r) => r.id !== rid);
+  });
+  on('POST', '/api/rules/:rid/move', (db, b, { rid }) => {
+    requireCommish(db, b, 'change the rules');
+    const list = rules(db);
+    const i = list.findIndex((r) => r.id === rid);
+    if (i < 0) throw new HttpError(404, 'rule not found');
+    const j = i + (Number(b.dir) < 0 ? -1 : 1);
+    if (j < 0 || j >= list.length) return list;
+    [list[i], list[j]] = [list[j], list[i]];
+    return list;
+  });
+  on('POST', '/api/seed-demo', (db) => {
+    if (db.players.length) throw bad('demo data can only be loaded into an empty league');
+    Object.assign(db, buildDemo(newId, db.settings.season));
+  });
+  on('POST', '/api/import', (db, b) => {
+    requireCommish(db, b, 'restore a backup');
+    const incoming = b?.db;
+    for (const k of ['players', 'games', 'posts', 'plays', 'fame']) {
+      if (!Array.isArray(incoming?.[k])) throw bad(`backup is missing "${k}"`);
+    }
+    const version = db.version;
+    Object.assign(db, emptyDb(), incoming, { version });
+  });
+
+  // --- players
+  // One-time roster setup. Removes every player who isn't on HFL_ROSTER, plus anything
+  // that only makes sense with them (their games, posts, plays, Hall of Fame entries),
+  // then adds whoever on the roster is missing. Safe to call repeatedly: once the
+  // roster version is recorded it does nothing, so players added later are never touched.
+  // One-time: set up the season teams (HFL_TEAMS) by name, and line up any game that
+  // hasn't started yet.
+  on('POST', '/api/setup-teams', (db) => {
+    if ((db.settings.teamsVersion || 0) >= TEAMS_VERSION) return { changed: false };
+    const byName = new Map(db.players.map((p) => [String(p.name || '').trim().toLowerCase(), p.id]));
+    db.settings.teams = HFL_TEAMS.map((t) => ({ id: t.id, name: t.name, color: t.color, season: db.settings.season,
+      players: t.players.map((n) => byName.get(n.toLowerCase())).filter(Boolean) }));
+    db.settings.teamsVersion = TEAMS_VERSION;
+    for (const g of db.games) {
+      if (g.status !== 'scheduled') continue;
+      g.teamIds = { A: db.settings.teams[0].id, B: db.settings.teams[1].id };
+      g.teamNames = { A: db.settings.teams[0].name, B: db.settings.teams[1].name };
+      const placed = new Set([...g.teams.A, ...g.teams.B]);
+      const free = (pid) => !seasonTeamOf(db, pid);
+      // walk-ons with no season team stay where they were; everyone else goes to his team
+      g.teams = { A: g.teams.A.filter(free), B: g.teams.B.filter(free) };
+      for (const pid of db.players.map((p) => p.id)) if (g.rsvps[pid] === 'in' || placed.has(pid)) placeBySeasonTeam(db, g, pid);
+      delete g.prevTeams;
+    }
+    return { changed: true, teams: db.settings.teams.map((t) => t.name) };
+  });
+  // League admins edit the season teams (names, colors, who's on which).
+  on('PUT', '/api/season-teams', (db, b) => {
+    requireCommish(db, b, 'change the season teams');
+    const list = Array.isArray(b.teams) ? b.teams : [];
+    if (list.length !== 2) throw bad('the league has two teams');
+    const seen = new Set();
+    const prev = new Map((db.settings.teams || []).map((t) => [t.id, t]));
+    db.settings.teams = list.map((t, i) => {
+      const id = prev.has(t.id) ? t.id : (t.id && /^[a-z0-9-]{2,24}$/.test(t.id) ? t.id : newId());
+      const players = (Array.isArray(t.players) ? t.players : []).map((pid) => {
+        player(db, pid);
+        if (seen.has(pid)) throw bad('a player can only be on one team');
+        seen.add(pid);
+        return pid;
+      });
+      return { ...(prev.get(id) || {}), id, name: str(t.name, 24, { required: true, name: 'team name' }), color: color(t.color, i ? '#36c8ff' : '#ff5a1f'), season: db.settings.season, players };
+    });
+    // games that haven't started follow the new teams
+    for (const g of db.games) {
+      if (g.status !== 'scheduled' || !g.teamIds) continue;
+      g.teamIds = { A: db.settings.teams[0].id, B: db.settings.teams[1].id };
+      g.teamNames = { A: db.settings.teams[0].name, B: db.settings.teams[1].name };
+      const free = (pid) => !seasonTeamOf(db, pid);
+      const placed = new Set([...g.teams.A, ...g.teams.B]);
+      g.teams = { A: g.teams.A.filter(free), B: g.teams.B.filter(free) };
+      for (const pid of db.players.map((p) => p.id)) if (g.rsvps[pid] === 'in' || placed.has(pid)) placeBySeasonTeam(db, g, pid);
+    }
+    return db.settings.teams;
+  });
+  on('POST', '/api/setup-roster', (db, b, params, fx) => {
+    const have = db.settings.rosterVersion || 0;
+    if (have >= ROSTER_VERSION) return { changed: false };
+    if (have >= 1) {
+      // Already set up: just add anyone new who isn't here yet.
+      const names = new Set(db.players.map((p) => String(p.name || '').trim().toLowerCase()));
+      const added = [];
+      for (let v = have + 1; v <= ROSTER_VERSION; v++) {
+        for (const name of ROSTER_ADDITIONS[v] || []) {
+          if (names.has(name.toLowerCase())) continue;
+          names.add(name.toLowerCase());
+          const i = HFL_ROSTER.indexOf(name);
+          db.players.push({ id: newId(), name, nickname: '', number: '', position: 'ATH', startOvr: 70, emoji: '',
+            color: ROSTER_COLORS[i % ROSTER_COLORS.length], active: true, createdAt: now() });
+          added.push(name);
+        }
+      }
+      db.settings.rosterVersion = ROSTER_VERSION;
+      return { changed: added.length > 0, removed: 0, added: added.length, names: added };
+    }
+    const wanted = new Map(HFL_ROSTER.map((n) => [n.toLowerCase(), n]));
+    const keep = new Map(); // roster name → existing player (first one wins)
+    for (const p of db.players) {
+      const key = String(p.name || '').trim().toLowerCase();
+      if (wanted.has(key) && !keep.has(key)) keep.set(key, p);
+    }
+    const kept = new Set([...keep.values()].map((p) => p.id));
+    const removed = new Set(db.players.filter((p) => !kept.has(p.id)).map((p) => p.id));
+    const gone = (id) => id && removed.has(id);
+
+    db.players = HFL_ROSTER.map((name, i) => (keep.has(name.toLowerCase()) ? { ...keep.get(name.toLowerCase()), name } : {
+      id: newId(), name, nickname: '', number: '', position: 'ATH', startOvr: 70, emoji: '',
+      color: ROSTER_COLORS[i % ROSTER_COLORS.length], active: true, createdAt: now(),
+    }));
+    db.games = db.games.filter((g) => ![...g.teams.A, ...g.teams.B, ...Object.keys(g.rsvps)].some(gone)
+      && !g.events.some((e) => gone(e.p1) || gone(e.p2)));
+    for (const g of db.games) {
+      for (const id of Object.keys(g.mvpVotes)) if (gone(id) || gone(g.mvpVotes[id])) delete g.mvpVotes[id];
+    }
+    db.posts = db.posts.filter((p) => !gone(p.authorId));
+    for (const p of db.posts) for (const e of Object.keys(p.reactions)) p.reactions[e] = p.reactions[e].filter((id) => !gone(id));
+    db.plays = db.plays.filter((p) => !gone(p.authorId));
+    const gameIds = new Set(db.games.map((g) => g.id));
+    db.fame = db.fame.filter((f) => {
+      const drop = gone(f.authorId) || f.playerIds.some(gone) || (f.gameId && !gameIds.has(f.gameId));
+      if (drop && f.image) fx.images.push({ op: 'delete', file: f.image.split(/[/:]/).pop() });
+      return !drop;
+    });
+    for (const f of db.fame) f.votes = f.votes.filter((id) => !gone(id));
+    db.settings.rosterVersion = ROSTER_VERSION;
+    return { changed: true, removed: removed.size, added: HFL_ROSTER.length - keep.size };
+  });
+
+  on('POST', '/api/players', (db, b) => {
+    // Anyone can add a player, but only the commissioner sets his starting ratings/position.
+    const rated = isCommish(db, whoIsAsking(db, b)) ? {} : { startOvr: 70, position: 'ATH' };
+    const p = cleanPlayer({ position: 'ATH', startOvr: 70, emoji: '', nickname: '', number: '', ...b, ...rated });
+    Object.assign(p, { id: newId(), active: true, createdAt: now(), color: color(b.color, '#ff6b1a') });
+    db.players.push(p);
+    return p;
+  });
+  // Card photo: { image: dataURL } to set, { image: null } to remove.
+  on('POST', '/api/players/:id/photo', (db, b, { id }, fx) => {
+    const p = player(db, id);
+    requireSelfOrCommish(db, b, id, 'change this card photo');
+    const old = p.photo;
+    if (b.image) {
+      const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.image);
+      if (!m) throw bad('photo must be a JPEG, PNG or WebP');
+      if (Math.floor((m[2].length * 3) / 4) > MAX_IMAGE_BYTES) throw bad(`photo is too big (${MAX_IMAGE_BYTES / 1024}KB max)`);
+      const file = `player-${p.id}-${newId()}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
+      fx.images.push({ op: 'put', file, base64: m[2], mime: `image/${m[1]}` });
+      p.photo = imageUrl(file);
+    } else {
+      p.photo = null;
+    }
+    if (old) fx.images.push({ op: 'delete', file: old.split(/[/:]/).pop() });
+    return p;
+  });
+
+  on('PATCH', '/api/players/:id', (db, b, { id }) => {
+    const i = db.players.findIndex((p) => p.id === id);
+    if (i < 0) throw new HttpError(404, 'player not found');
+    const fields = Object.keys(b).filter((k) => k !== '_auth');
+    if (fields.some((k) => !SELF_FIELDS.includes(k))) requireCommish(db, b, 'change names, positions, starting ratings or retire players');
+    else requireSelfOrCommish(db, b, id, 'edit this profile');
+    db.players[i] = cleanPlayer(b, db.players[i]);
+    return db.players[i];
+  });
+
+  // Personal PIN. Unclaimed players: anyone can set it (that's claiming your name).
+  // Claimed: only that player (changing it) or the commissioner (resetting it; null clears it).
+  on('POST', '/api/players/:id/pin', (db, b, { id }) => {
+    const p = player(db, id);
+    const next = b.pinHash ?? null;
+    if (next !== null && !PIN_HASH.test(next)) throw bad('bad PIN');
+    if (p.pinHash) requireSelfOrCommish(db, b, id, 'change this PIN');
+    if (next === null && !p.pinHash) return { ok: true };
+    p.pinHash = next;
+    return { ok: true, claimed: !!next };
+  });
+
+  // Manual ratings, Madden style: { ratings: { playerId: { attrs: { spd: 88, ... }, position } } }.
+  // (A plain number still works and sets every rating to it.) Stored as dated edits so
+  // games played afterwards keep moving the ratings from the new numbers.
+  on('POST', '/api/ratings', (db, b) => {
+    requireCommish(db, b, 'change ratings');
+    const entries = Object.entries(b.ratings || {});
+    if (!entries.length) throw bad('no ratings to save');
+    const at = now();
+    for (const [id, value] of entries) {
+      const p = player(db, id);
+      const edit = { at };
+      if (typeof value === 'number' || typeof value === 'string') {
+        edit.ovr = num(value, ATTR_MIN, ATTR_MAX, { name: `${p.name}'s rating`, int: true });
+      } else {
+        if (value?.position !== undefined) p.position = oneOf(value.position, POSITIONS, 'position');
+        if (value && 'heightIn' in value) p.heightIn = cleanHeight(value.heightIn);
+        if (value && 'weightLb' in value) p.weightLb = cleanWeight(value.weightLb);
+        const attrs = value?.attrs || {};
+        if (Object.keys(attrs).length) {
+          edit.attrs = {};
+          for (const [k, v] of Object.entries(attrs)) {
+            if (!ATTR_KEYS.includes(k)) throw bad(`unknown rating "${k}"`);
+            edit.attrs[k] = num(v, ATTR_MIN, ATTR_MAX, { name: `${p.name}'s ${k.toUpperCase()}`, int: true });
+          }
+        }
+      }
+      if (edit.ovr !== undefined || edit.attrs) p.ratingEdits = [...(p.ratingEdits || []), edit].slice(-50);
+    }
+    return entries.length;
+  });
+
+  // --- games
+  on('POST', '/api/games', (db, b) => {
+    const date = str(b.date, 10, { required: true, name: 'date' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw bad('date must look like 2026-09-28');
+    const time = str(b.time, 5, { name: 'time' });
+    if (time && !/^\d{2}:\d{2}$/.test(time)) throw bad('time must look like 18:30');
+    const g = {
+      id: newId(), date, time,
+      location: str(b.location, 80, { name: 'location' }),
+      season: str(b.season || db.settings.season, 20, { name: 'season' }),
+      teamNames: { A: str(b.teamNames?.A || 'Shirts', 24), B: str(b.teamNames?.B || 'Skins', 24) },
+      status: 'scheduled', rsvps: {}, teams: { A: [], B: [] }, events: [], mvpVotes: {}, createdAt: now(),
+    };
+    const st = seasonTeams(db);
+    if (st.length === 2) {
+      g.teamIds = { A: st[0].id, B: st[1].id };
+      g.teamNames = { A: st[0].name, B: st[1].name };
+    }
+    db.games.push(g);
+    return g;
+  });
+  on('PATCH', '/api/games/:id', (db, b, { id }) => {
+    const g = game(db, id);
+    if ('date' in b) {
+      const d = str(b.date, 10, { required: true, name: 'date' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw bad('date must look like 2026-09-28');
+      g.date = d;
+    }
+    if ('time' in b) g.time = str(b.time, 5, { name: 'time' });
+    if ('location' in b) g.location = str(b.location, 80, { name: 'location' });
+    if ('season' in b) g.season = str(b.season, 20, { required: true, name: 'season' });
+    if (b.teamNames) {
+      if ('A' in b.teamNames) g.teamNames.A = str(b.teamNames.A, 24, { required: true, name: 'team name' });
+      if ('B' in b.teamNames) g.teamNames.B = str(b.teamNames.B, 24, { required: true, name: 'team name' });
+    }
+    return g;
+  });
+  on('DELETE', '/api/games/:id', (db, b, { id }) => {
+    game(db, id);
+    db.games = db.games.filter((g) => g.id !== id);
+  });
+  on('POST', '/api/games/:id/rsvp', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'scheduled') throw bad('RSVPs are closed once the game starts');
+    if (!rsvpOpen(g)) throw bad("RSVPs closed at midnight: it's game day. Walk-ons can still be added to a team");
+    player(db, b.playerId);
+    if (b.status === null || b.status === '') delete g.rsvps[b.playerId];
+    else g.rsvps[b.playerId] = oneOf(b.status, ['in', 'out'], 'status');
+    if (g.teamIds) {
+      if (g.rsvps[b.playerId] === 'in') placeBySeasonTeam(db, g, b.playerId);
+      else for (const side of ['A', 'B']) g.teams[side] = g.teams[side].filter((x) => x !== b.playerId);
+    }
+    return g;
+  });
+  on('POST', '/api/games/:id/auto-teams', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'scheduled') throw bad('teams are locked once the game starts');
+    if (g.teamIds) {
+      for (const p of db.players) if (p.active !== false && g.rsvps[p.id] === 'in') placeBySeasonTeam(db, g, p.id);
+      return g;
+    }
+    const league = computeLeague(db);
+    // Everyone who RSVP'd in, plus anyone already placed on a team (game-day walk-ons).
+    const placed = new Set([...g.teams.A, ...g.teams.B]);
+    const ins = db.players.filter((p) => p.active !== false && (g.rsvps[p.id] === 'in' || placed.has(p.id)));
+    if (ins.length < 2) throw bad('need at least 2 players in to make teams');
+    const res = balanceTeams(ins.map((p) => ({ id: p.id, elo: league.elo[p.id], position: p.position })));
+    // Keep the teams from before this shuffle so "Undo shuffle" can bring them back.
+    if (g.teams.A.length || g.teams.B.length) g.prevTeams = structuredClone(g.teams);
+    g.teams = { A: res.A, B: res.B };
+    return g;
+  });
+  // Undo the last shuffle (tapping it again flips back, like redo).
+  on('POST', '/api/games/:id/undo-teams', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'scheduled') throw bad('teams are locked once the game starts');
+    if (!g.prevTeams) throw bad('nothing to undo');
+    const prev = checkTeams(db, g.prevTeams);
+    g.prevTeams = structuredClone(g.teams);
+    g.teams = prev;
+    return g;
+  });
+  on('PUT', '/api/games/:id/teams', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status === 'final') throw bad('reopen the game to change teams');
+    g.teams = checkTeams(db, b.teams);
+    return g;
+  });
+  on('POST', '/api/games/:id/start', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'scheduled') throw bad('game already started');
+    if (!g.teams.A.length || !g.teams.B.length) throw bad('pick teams first');
+    if (localToday() < g.date) throw bad("It's not game day yet. You can start the game on game day");
+    g.status = 'live';
+    g.startedAt = now();
+    if (b.scorekeeperId) g.scorekeeperId = player(db, b.scorekeeperId, 'scorekeeper').id;
+    return g;
+  });
+  // Undo a game that was started before game day by mistake (only if nothing was logged yet),
+  // so RSVPs reopen. The app calls this on its own when it spots one.
+  on('POST', '/api/games/:id/unstart', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'live' || g.events.length || localToday() >= g.date) return { changed: false };
+    g.status = 'scheduled';
+    delete g.startedAt;
+    return { changed: true };
+  });
+  on('POST', '/api/games/:id/final', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'live') throw bad('game is not live');
+    g.status = 'final';
+    g.endedAt = now();
+    return g;
+  });
+  on('POST', '/api/games/:id/reopen', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'final') throw bad('game is not final');
+    g.status = 'live';
+    return g;
+  });
+  // Typed-in box score (engine.BOX_FIELDS): totals per player instead of play-by-play.
+  // box: null switches the game back to play-by-play.
+  on('PUT', '/api/games/:id/box', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status === 'scheduled') throw bad('start the game first');
+    if (b.box === null) { delete g.box; return g; }
+    if (!b.box || typeof b.box !== 'object' || Array.isArray(b.box)) throw bad('no stats to save');
+    const onTeam = new Set([...g.teams.A, ...g.teams.B]);
+    const box = {};
+    for (const [pid, line] of Object.entries(b.box)) {
+      if (!onTeam.has(pid)) throw bad('stats for someone who isn’t in this game');
+      if (line && typeof line === 'object' && Object.keys(line).some((k) => !BOX_KEYS.includes(k))) throw bad('unknown stat');
+      const v = normalizeBoxLine(line || {});
+      if (Object.values(v).some(Boolean)) box[pid] = v;
+    }
+    g.box = box;
+    g.boxBy = b.by || null;
+    return g;
+  });
+  // Optional game clock (see clock.js). Only game.clock changes; plays are untouched.
+  on('POST', '/api/games/:id/clock', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'live') throw bad('the clock only runs during a live game');
+    const action = oneOf(b.action, CLOCK_ACTIONS, 'clock action');
+    let next;
+    try { next = applyClock(g.clock || null, action, now()); } catch (e) { throw bad(e.message); }
+    if (next) g.clock = next; else delete g.clock;
+    return g;
+  });
+  on('POST', '/api/games/:id/events', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status === 'scheduled') throw bad('start the game first');
+    const t = EVENT_TYPES[b.type];
+    if (!t) throw bad('unknown play type');
+    const team = teamOf(g, b.p1);
+    if (!team) throw bad(`${t.prompts[0]} must be playing in this game`);
+    let p2 = null;
+    if (b.p2 && t.roles[1]) {
+      const team2 = teamOf(g, b.p2);
+      const want = t.side === 'same' ? team : team === 'A' ? 'B' : 'A';
+      if (team2 !== want) throw bad(`${t.prompts[1]} must be on the ${t.side === 'same' ? 'same' : 'other'} team`);
+      if (b.p2 === b.p1) throw bad('pick two different players');
+      p2 = b.p2;
+    } else if (t.required) throw bad(`${t.prompts[1]} is required`);
+    const ev = { id: newId(), type: b.type, p1: b.p1, p2, team, ts: now(), by: b.by || null };
+    g.events.push(ev);
+    return ev;
+  });
+  on('DELETE', '/api/games/:id/events/:eid', (db, b, { id, eid }) => {
+    const g = game(db, id);
+    find(g.events, eid, 'play');
+    g.events = g.events.filter((e) => e.id !== eid);
+  });
+  on('POST', '/api/games/:id/mvp', (db, b, { id }) => {
+    const g = game(db, id);
+    if (g.status !== 'final') throw bad('MVP voting opens after the final whistle');
+    if (!teamOf(g, b.voterId)) throw bad('only guys who played can vote');
+    if (!teamOf(g, b.playerId)) throw bad('vote for someone who played');
+    if (b.voterId === b.playerId) throw bad('nice try. no voting for yourself');
+    g.mvpVotes[b.voterId] = b.playerId;
+    return g;
+  });
+
+  // --- trash talk wall
+  on('POST', '/api/posts', (db, b) => {
+    const post = {
+      id: newId(), authorId: player(db, b.authorId, 'author').id,
+      text: str(b.text, 500, { required: true, name: 'post' }),
+      gameId: b.gameId ? game(db, b.gameId).id : null,
+      reactions: {}, createdAt: now(),
+    };
+    db.posts.push(post);
+    return post;
+  });
+  on('POST', '/api/posts/:id/react', (db, b, { id }) => {
+    const post = find(db.posts, id, 'post');
+    const emoji = oneOf(b.emoji, REACTIONS, 'reaction');
+    player(db, b.playerId);
+    const list = (post.reactions[emoji] ||= []);
+    const i = list.indexOf(b.playerId);
+    if (i >= 0) list.splice(i, 1); else list.push(b.playerId);
+    return post;
+  });
+  on('DELETE', '/api/posts/:id', (db, b, { id }) => {
+    find(db.posts, id, 'post');
+    db.posts = db.posts.filter((p) => p.id !== id);
+  });
+
+  // --- team playbooks (private, encrypted; see teamlock.js). A "book" is a season team's
+  // playbook (teamId), or for games from before season teams, one side of one game.
+  const bookFor = (db, ref) => {
+    if (ref.teamId) {
+      const t = (db.settings.teams || []).find((x) => x.id === ref.teamId);
+      if (!t) throw new HttpError(404, 'team not found');
+      return { lock: t.lock, members: t.players, owns: (p) => p.teamId === t.id, stamp: { teamId: t.id },
+        captain: () => seasonCaptain(db, t), setLock: (l) => { if (l) t.lock = l; else delete t.lock; } };
+    }
+    const g = game(db, ref.gameId);
+    const side = oneOf(ref.side, ['A', 'B'], 'team');
+    return { lock: g.teamLocks?.[side], members: g.teams?.[side] || [], owns: (p) => p.gameId === g.id && p.side === side, stamp: { gameId: g.id, side },
+      captain: () => teamCaptain(db, g, side), setLock: (l) => { g.teamLocks ||= {}; if (l) g.teamLocks[side] = l; else delete g.teamLocks[side]; } };
+  };
+  const bookRef = (x) => (x.teamId ? { teamId: x.teamId } : { gameId: x.gameId, side: x.side });
+  const proofOk = (book, b) => !!book.lock && typeof b?._team === 'string' && b._team.length < 200 && sha256hex(b._team) === book.lock.proofHash;
+  const canManageBook = (db, b, book) => {
+    const who = whoIsAsking(db, b);
+    return !!who && (isCommish(db, who) || who === book.captain());
+  };
+  function setBookLock(db, b, book) {
+    if (!book.members.length) throw bad('pick teams first');
+    if (!canManageBook(db, b, book)) throw forbidden("Only this team's captain or a league admin can set the team PIN");
+    const teamPlays = db.plays.filter(book.owns);
+    if (b.reset) {
+      // forgot the PIN: the old plays can't be unlocked anymore, so they go
+      db.plays = db.plays.filter((p) => !book.owns(p));
+    } else if (book.lock) {
+      // changing the PIN: needs the old one and every play re-locked with the new one
+      if (!proofOk(book, b)) throw forbidden('Enter the current team PIN first');
+      const boxes = new Map((Array.isArray(b.plays) ? b.plays : []).map((x) => [x?.id, x?.enc]));
+      if (boxes.size !== teamPlays.length || teamPlays.some((p) => !boxes.has(p.id))) throw bad('every team play has to be re-locked with the new PIN');
+      for (const p of teamPlays) { p.enc = cleanBox(boxes.get(p.id)); p.updatedAt = now(); }
+    }
+    book.setLock(b.lock === null ? null : { ...cleanLock(b.lock), setBy: whoIsAsking(db, b), setAt: now() });
+    return { ok: true };
+  }
+  on('POST', '/api/games/:id/team-lock', (db, b, { id }) => setBookLock(db, b, bookFor(db, { gameId: id, side: b.side })));
+  on('POST', '/api/season-teams/:tid/lock', (db, b, { tid }) => setBookLock(db, b, bookFor(db, { teamId: tid })));
+
+  // --- playbook (league plays are public; plays with a teamId, or a gameId + side, are that
+  // team's and encrypted)
+  const openBook = (db, ref, b) => {
+    const book = bookFor(db, ref);
+    if (!book.lock) throw bad('set a team PIN first');
+    if (!proofOk(book, b)) throw forbidden('Wrong or missing team PIN');
+    return book;
+  };
+  on('POST', '/api/plays', (db, b) => {
+    if (b.teamId || b.gameId) {
+      const book = openBook(db, bookRef(b), b);
+      const play = { id: newId(), ...book.stamp, enc: cleanBox(b.enc), authorId: b.authorId || null, createdAt: now(), updatedAt: now() };
+      db.plays.push(play);
+      return play;
+    }
+    const play = { id: newId(), ...cleanPlay(b), authorId: b.authorId || null, createdAt: now(), updatedAt: now() };
+    db.plays.push(play);
+    return play;
+  });
+  on('PUT', '/api/plays/:id', (db, b, { id }) => {
+    const play = find(db.plays, id, 'play');
+    if (play.teamId || play.gameId) {
+      openBook(db, bookRef(play), b);
+      Object.assign(play, { enc: cleanBox(b.enc), updatedAt: now() });
+      return play;
+    }
+    if (b.teamId || b.gameId || b.enc) throw bad("league plays can't be moved into a team playbook; copy them instead");
+    Object.assign(play, cleanPlay(b), { updatedAt: now() });
+    return play;
+  });
+  on('DELETE', '/api/plays/:id', (db, b, { id }) => {
+    const play = find(db.plays, id, 'play');
+    if (play.teamId || play.gameId) {
+      const book = bookFor(db, bookRef(play));
+      if (!proofOk(book, b) && !canManageBook(db, b, book)) throw forbidden('Wrong or missing team PIN');
+    }
+    db.plays = db.plays.filter((p) => p.id !== id);
+  });
+
+  // --- hall of fame
+  on('POST', '/api/fame', (db, b, params, fx) => {
+    const entry = {
+      id: newId(),
+      category: oneOf(b.category, FAME_CATEGORIES, 'category'),
+      title: str(b.title, 80, { required: true, name: 'title' }),
+      description: str(b.description, 600, { name: 'description' }),
+      playerIds: (Array.isArray(b.playerIds) ? b.playerIds : []).slice(0, 10).map((pid) => player(db, pid).id),
+      gameId: b.gameId ? game(db, b.gameId).id : null,
+      eventId: b.eventId ? str(b.eventId, 16) : null,
+      authorId: b.authorId ? player(db, b.authorId, 'author').id : null,
+      votes: [], image: null, createdAt: now(),
+    };
+    if (b.image) {
+      const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.image);
+      if (!m) throw bad('photo must be a JPEG, PNG or WebP');
+      if (Math.floor((m[2].length * 3) / 4) > MAX_IMAGE_BYTES) throw bad(`photo is too big (${MAX_IMAGE_BYTES / 1024}KB max)`);
+      const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+      const file = `${entry.id}.${ext}`;
+      fx.images.push({ op: 'put', file, base64: m[2], mime: `image/${m[1]}` });
+      entry.image = imageUrl(file);
+    }
+    db.fame.push(entry);
+    return entry;
+  });
+  on('POST', '/api/fame/:id/vote', (db, b, { id }) => {
+    const entry = find(db.fame, id, 'entry');
+    player(db, b.playerId);
+    const i = entry.votes.indexOf(b.playerId);
+    if (i >= 0) entry.votes.splice(i, 1); else entry.votes.push(b.playerId);
+    return entry;
+  });
+  on('DELETE', '/api/fame/:id', (db, b, { id }, fx) => {
+    const entry = find(db.fame, id, 'entry');
+    if (entry.image) fx.images.push({ op: 'delete', file: entry.image.split(/[/:]/).pop() });
+    db.fame = db.fame.filter((f) => f.id !== id);
+  });
+
+  return routes;
+}
+
+// Today's date where the app is running ("2026-09-29"), for the RSVP deadline.
+export const localToday = () => {
+  const d = new Date();
+  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+// RSVPs stay open until game day starts (midnight at the start of the game's date).
+export const rsvpOpen = (g, today = localToday()) => g.status === 'scheduled' && today < g.date;
+
+export function matchRoute(routes, method, path) {
+  for (const r of routes) {
+    if (r.method !== method) continue;
+    const m = r.re.exec(path);
+    if (m) return { route: r, params: Object.fromEntries(r.keys.map((k, i) => [k, m[i + 1]])) };
+  }
+  return null;
+}

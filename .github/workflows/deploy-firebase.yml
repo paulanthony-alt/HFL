@@ -7,6 +7,7 @@ name: Deploy to Firebase
 on:
   push:
     branches: [main, claude/hfl-pickup-football-app-rrsp7j]
+    paths-ignore: ['test-site/**', '.github/workflows/deploy-test-site.yml'] # the test copy deploys on its own
   workflow_dispatch:
 
 jobs:
