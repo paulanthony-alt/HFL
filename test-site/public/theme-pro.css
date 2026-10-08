@@ -1,0 +1,290 @@
+/* ==========================================================================
+   HFL — "Primetime" theme (test site only)
+   Loaded after styles.css. A broadcast / Madden-menu look: navy steel panels,
+   first-down-line yellow, sharp angled edges, italic heavy type, coach-sheet
+   tables. Delete the <link> in index.html to go back to the old look.
+   ========================================================================== */
+
+:root {
+  /* surfaces: stadium navy steel */
+  --bg: #05080f;
+  --bg-1: #0a0f1a;
+  --surface: #0e1524;
+  --surface-2: #131c2f;
+  --surface-3: #1a2540;
+  --line: rgba(160, 190, 255, 0.09);
+  --line-2: rgba(160, 190, 255, 0.17);
+
+  /* text */
+  --text: #f4f7fc;
+  --text-2: #c6cfdf;
+  --muted: #8592a8;
+  --faint: #4f5b70;
+
+  /* brand: first-down yellow */
+  --blaze: #ffd400;
+  --blaze-2: #ffe55c;
+  --gold: #ffd400;
+  --red: #ff2f4e;
+  --turf: #22d67a;
+  --ice: #3cc4ff;
+  --teamA: #ff6a1f;
+  --teamB: #3cc4ff;
+
+  --r-sm: 3px;
+  --r: 5px;
+  --r-lg: 6px;
+  --lift: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-1: var(--lift), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: var(--lift), 0 22px 44px -22px rgba(0, 0, 0, 0.9);
+  --glow-blaze: 0 10px 26px -12px rgba(255, 212, 0, 0.55);
+  --dock-h: 64px;
+}
+
+/* italic heavy display type, like a broadcast package */
+h1, h2, h3, .page-title, .gh-title, .hero-logo, .boot-mark, .sb-score, .tc-ovr, .tc-name,
+.mvp-name, .mini-score, .count b, .ticket b, .team-name, .box-head, .pod-name, .logo span {
+  font-style: italic; font-synthesis: style;
+}
+
+/* ---------- background: field under the lights ---------- */
+body::before {
+  background:
+    radial-gradient(70% 40% at 50% -12%, rgba(120, 170, 255, 0.16), transparent 70%),
+    radial-gradient(60% 45% at 50% 115%, rgba(34, 214, 122, 0.06), transparent 70%),
+    /* hash marks */
+    repeating-linear-gradient(180deg, transparent 0 23px, rgba(255, 255, 255, 0.018) 23px 24px),
+    /* yard lines */
+    repeating-linear-gradient(180deg, transparent 0 119px, rgba(255, 255, 255, 0.04) 119px 120px),
+    /* carbon weave */
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.012) 0 2px, transparent 2px 6px),
+    var(--bg);
+}
+::selection { background: var(--blaze); color: #000; }
+
+/* ---------- top bar ---------- */
+.top:is(header) {
+  background: linear-gradient(180deg, #070c17, rgba(7, 12, 23, 0.94));
+  border-bottom: 0;
+  box-shadow: inset 0 -2px 0 var(--blaze), 0 10px 30px -10px rgba(0, 0, 0, 0.9);
+}
+.logo {
+  padding: 4px 16px 3px 13px; border-radius: 2px;
+  background: linear-gradient(180deg, #ffe14d, var(--blaze) 60%, #e6bd00);
+  transform: skewX(-14deg);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 8px 22px -10px rgba(255, 212, 0, 0.7);
+}
+.logo span { transform: skewX(14deg); color: #05080f; letter-spacing: 0.08em; }
+.logo::after { background: repeating-linear-gradient(90deg, var(--blaze) 0 3px, transparent 3px 6px); }
+.crew { color: var(--text-2); }
+.me-pill { border-radius: 3px; background: var(--surface-2); }
+.me-pill:not(:has(.av)) { color: var(--blaze); border-color: rgba(255, 212, 0, 0.4); }
+.icon-btn { border-radius: 4px; }
+
+/* ---------- bottom bar: a game-menu strip ---------- */
+.tabs a { border-radius: 0; font-size: 11px; letter-spacing: 0.12em; }
+.tabs a::before {
+  inset: 0 6px auto; height: 3px; border: 0; border-radius: 0;
+  background: var(--blaze); box-shadow: 0 0 14px rgba(255, 212, 0, 0.7);
+  transform: scaleX(0.3); transform-origin: center;
+}
+.tabs a::after {
+  content: ''; position: absolute; inset: 3px 6px 0; z-index: -1; opacity: 0; transition: opacity 0.25s;
+  background: linear-gradient(180deg, rgba(255, 212, 0, 0.14), transparent 80%);
+}
+.tabs a.on::after { opacity: 1; }
+.tabs a.on { color: #fff; }
+.tabs a.on svg { color: var(--blaze); }
+@media (max-width: 1023px) {
+  .tabs {
+    left: 0; right: 0; bottom: 0;
+    height: calc(var(--dock-h) + env(safe-area-inset-bottom));
+    padding: 0 max(4px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left));
+    border-radius: 0; border: 0;
+    background: linear-gradient(180deg, rgba(14, 21, 36, 0.97), rgba(5, 8, 15, 0.98));
+    box-shadow: inset 0 1px 0 var(--line-2), 0 -14px 30px -12px rgba(0, 0, 0, 0.9);
+  }
+  body { padding-bottom: calc(var(--dock-h) + 22px + env(safe-area-inset-bottom)); }
+  .toast { bottom: calc(var(--dock-h) + 18px + env(safe-area-inset-bottom)); }
+}
+/* desktop: side rail with a yellow edge marker */
+@media (min-width: 1024px) {
+  .tabs { background: linear-gradient(90deg, #070c17, #0b1222); border-right: 1px solid var(--line-2); padding: 84px 0 20px; }
+  .tabs a::before { inset: 6px auto 6px 0; width: 4px; height: auto; transform: scaleY(0.3); }
+  .tabs a::after { inset: 0 0 0 4px; background: linear-gradient(90deg, rgba(255, 212, 0, 0.14), transparent 90%); }
+}
+
+/* ---------- toast: broadcast lower third ---------- */
+.toast {
+  border-radius: 2px; background: #0d1424; color: var(--text);
+  border-left: 5px solid var(--blaze); box-shadow: 0 0 0 1px var(--line-2), 0 18px 40px -10px rgba(0, 0, 0, 0.9);
+  font-family: var(--label); font-size: 16px; letter-spacing: 0.03em; text-align: left;
+}
+.toast.err { background: #2a0910; color: #fff; border-left-color: var(--red); }
+
+/* ---------- headings ---------- */
+.kicker::before { width: 18px; height: 4px; transform: skewX(-35deg); }
+.page-title { text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); }
+.page-head { position: relative; padding-bottom: 14px; }
+.page-head::after {
+  content: ''; position: absolute; left: 0; bottom: 0; width: 100%; height: 2px;
+  background: linear-gradient(90deg, var(--blaze) 0 64px, var(--line-2) 64px, transparent);
+}
+/* section headers become angled header tabs */
+.sec { margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line-2); }
+.sec h3 { font-size: 20px; letter-spacing: 0.04em; }
+.sec h3::before { width: 6px; height: 20px; background: var(--blaze); transform: skewX(-18deg); box-shadow: 0 0 10px rgba(255, 212, 0, 0.5); }
+.card > .sec:first-child { padding-bottom: 10px; }
+.sec-link { color: var(--blaze); }
+
+/* ---------- panels ---------- */
+.card {
+  border-radius: var(--r-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 90px),
+    linear-gradient(180deg, var(--surface-2), var(--surface) 180px);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(160, 190, 255, 0.14);
+}
+/* angled corner notch, like a Madden menu panel */
+.card::after {
+  content: ''; position: absolute; top: -1px; right: -1px; width: 26px; height: 26px; pointer-events: none;
+  background: linear-gradient(225deg, var(--bg) 0 50%, transparent 50%);
+  border-top-right-radius: var(--r-lg);
+}
+.card-lite { border-radius: var(--r); background: rgba(5, 8, 15, 0.55); }
+.divider { background: linear-gradient(90deg, transparent, var(--line-2) 20%, var(--line-2) 80%, transparent); }
+.banner {
+  border-radius: var(--r); border: 1px solid var(--line-2); border-left: 4px solid var(--blaze);
+  background: linear-gradient(90deg, rgba(255, 212, 0, 0.12), rgba(19, 28, 47, 0.9) 55%);
+}
+.banner-dot { background: var(--blaze); box-shadow: 0 0 0 4px rgba(255, 212, 0, 0.18); }
+
+/* ---------- buttons ---------- */
+.btn { border-radius: 3px; background: linear-gradient(180deg, #1f2b47, var(--surface-3)); border-color: var(--line-2); }
+.btn:hover { background: linear-gradient(180deg, #26355a, #1d2a48); }
+.btn.sm { border-radius: 3px; }
+.btn.hot {
+  color: #05080f; border-radius: 2px;
+  background: linear-gradient(180deg, #ffe55c, var(--blaze) 55%, #e2b800);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--glow-blaze);
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  padding: 0 24px;
+}
+.btn.hot.sm { clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%); padding: 0 18px; }
+.btn.hot:hover { background: linear-gradient(180deg, #fff07a, #ffdc1f 55%, #ecc200); }
+.btn.hot:focus-visible { outline-color: #05080f; }
+.btn.ghost { background: transparent; }
+.btn.in, .btn.out { border-radius: 3px; }
+.btn.in { background: linear-gradient(180deg, #3ff09a, var(--turf)); color: #03200f; }
+:focus-visible { outline-color: var(--blaze); }
+input:focus, select:focus, textarea:focus { border-color: var(--blaze); box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35), 0 0 0 3px rgba(255, 212, 0, 0.18); }
+input, select, textarea { border-radius: 3px; background: #070b14; }
+.pill-select { border-radius: 3px; }
+.seg-radio span { border-radius: 3px; }
+.seg-radio input:checked + span { background: var(--blaze); border-color: var(--blaze); color: #05080f; }
+input[type=range]::-webkit-slider-runnable-track { background: linear-gradient(90deg, #6b5a00, var(--blaze)); border-radius: 2px; }
+input[type=range]::-moz-range-track { background: linear-gradient(90deg, #6b5a00, var(--blaze)); border-radius: 2px; }
+input[type=range]::-webkit-slider-thumb { border-radius: 3px; transform: skewX(-12deg); box-shadow: 0 0 0 1.5px var(--blaze), 0 4px 10px rgba(0, 0, 0, 0.6); }
+
+/* ---------- chips / filters ---------- */
+.chip { border-radius: 2px; }
+.tab-chip { border-radius: 3px; }
+.tab-chip.on { background: var(--blaze); border-color: var(--blaze); color: #05080f; box-shadow: 0 8px 20px -10px rgba(255, 212, 0, 0.7); }
+.tab-chip.on .muted { color: #4a3e00; }
+.pchip { border-radius: 4px; }
+.check-chip:has(input:checked) { border-color: var(--blaze); background: rgba(255, 212, 0, 0.12); }
+.me-opt { border-radius: var(--r); }
+.me-opt.on { border-color: var(--blaze); background: rgba(255, 212, 0, 0.1); }
+.badge { border-radius: 3px; }
+.tc-badges span { border-radius: 2px; }
+
+/* ---------- rows / results ---------- */
+.row-card, .result { border-radius: var(--r); border-left: 3px solid var(--line-2); }
+.row-card:hover, .result:hover { border-left-color: var(--blaze); }
+.ticket { border-radius: 3px; background: linear-gradient(180deg, #1d2944, #121a2d); }
+.ticket span:first-child { color: var(--blaze); }
+.pod { border-radius: var(--r); }
+.pod-1 { border-color: rgba(255, 212, 0, 0.5); background: linear-gradient(180deg, rgba(255, 212, 0, 0.18), var(--surface) 75%); }
+
+/* ---------- game card ---------- */
+.game-card::before { height: 4px; background: linear-gradient(90deg, var(--blaze), #fff2a8 50%, var(--blaze)); }
+.gh-time { color: var(--blaze); }
+.bar i { border-radius: 1px; }
+.bar i.on { background: linear-gradient(90deg, #e6bd00, var(--blaze)); box-shadow: 0 0 10px -2px rgba(255, 212, 0, 0.6); }
+.team { border-radius: var(--r); }
+.wp { border-radius: 2px; }
+
+/* scoreboard: TV score bug */
+.scoreboard {
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 40%),
+    linear-gradient(90deg, color-mix(in srgb, var(--teamA) 22%, #070b14), #070b14 35%, #070b14 65%, color-mix(in srgb, var(--teamB) 22%, #070b14));
+  border: 1px solid var(--line-2);
+  box-shadow: inset 0 -3px 0 var(--blaze), 0 18px 40px -16px rgba(0, 0, 0, 0.9);
+}
+.sb-name { border-radius: 1px; }
+
+/* live logger */
+.log-btn { border-radius: var(--r); }
+.log-btn.score { border-color: rgba(255, 212, 0, 0.5); background: linear-gradient(180deg, rgba(255, 212, 0, 0.2), rgba(255, 212, 0, 0.03)); }
+.log-step { border-radius: var(--r); border-color: rgba(255, 212, 0, 0.55); background: linear-gradient(180deg, rgba(255, 212, 0, 0.1), rgba(255, 212, 0, 0.02)); }
+.log-player { border-radius: 3px; }
+.log-player:active { background: var(--blaze); color: #000; }
+.ev-act { border-radius: 3px; }
+
+/* ---------- coach-sheet tables ---------- */
+.lb-wrap { border-radius: var(--r-lg); background: var(--surface); }
+.lb th {
+  padding: 12px 10px 10px; color: var(--text-2);
+  background: linear-gradient(180deg, #18233b, #121b2e);
+  border-bottom: 2px solid var(--blaze);
+}
+.lb tbody tr:nth-child(even) td { background-color: rgba(255, 255, 255, 0.018); }
+.lb tbody tr:hover td { background-color: rgba(255, 212, 0, 0.05); }
+.lb tr.lb-1 td { background-color: rgba(255, 212, 0, 0.08); }
+.lb tr.lb-1 td:first-child { box-shadow: inset 4px 0 0 var(--blaze); }
+.lb tr.me td { background-color: rgba(60, 196, 255, 0.08); }
+.lb tr.me td:first-child { box-shadow: inset 4px 0 0 var(--ice); }
+.rk { border-radius: 2px; }
+.rk-1 { background: linear-gradient(160deg, #fff07a, #e2b800); color: #241d00; }
+.box-head { border-bottom-width: 3px; }
+.box-head.win { border-bottom-color: var(--blaze); }
+.box-head.win b { color: var(--blaze); }
+.res { border-radius: 2px; }
+.vr-bar, .vr-bar span { border-radius: 1px; }
+.vr-bar span { background: linear-gradient(90deg, #b39400, var(--blaze)); }
+
+/* ---------- ratings ---------- */
+.ab-bar, .ab-bar i, .key-grade i { border-radius: 1px; }
+.ab-bar { background: rgba(255, 255, 255, 0.06); transform: skewX(-14deg); }
+.pos-ovr { border-radius: 3px; }
+.pos-ovr.best { box-shadow: inset 0 0 0 1.5px var(--blaze); }
+.rate-row.changed { background: linear-gradient(90deg, rgba(255, 212, 0, 0.09), transparent); box-shadow: inset 3px 0 0 var(--blaze); }
+.key-abbr { border-radius: 2px; color: var(--blaze); }
+.key-pos-row em { border-radius: 2px; }
+.key-pos-row em:first-child { border-color: rgba(255, 212, 0, 0.5); }
+.key-tier { border-radius: 3px; }
+
+/* ---------- hero / boot ---------- */
+.hero-logo { background: linear-gradient(175deg, #fff 22%, #fff3a6 45%, var(--blaze) 70%); -webkit-background-clip: text; background-clip: text; filter: drop-shadow(0 18px 40px rgba(255, 212, 0, 0.25)); }
+.boot-mark { background: linear-gradient(100deg, var(--faint) 20%, var(--text) 40%, var(--blaze) 50%, var(--faint) 62%); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; }
+.boot-bar, .boot-bar span { border-radius: 0; }
+.onboard { border-color: rgba(255, 212, 0, 0.25); }
+
+/* keep the purple Wrapped button (single-class rule in styles.css loses to .btn above) */
+.btn.wr-open, .btn.wr-open:hover { background: linear-gradient(110deg, #5b2fd0, #a43be0 55%, #ff5a1f); border: 0; color: #fff; }
+
+/* test badge in the same angled style; tighter header on small phones */
+.test-badge { border-radius: 2px; background: var(--blaze); color: #05080f; transform: skewX(-12deg); }
+.brand { min-width: 0; flex-shrink: 1; }
+@media (max-width: 380px) {
+  .brand { gap: 6px; }
+  .logo { padding: 3px 12px 2px 10px; }
+  .logo span { font-size: 22px; }
+  .logo::after { display: none; }
+  .test-badge { margin-left: 0; padding: 3px 5px; font-size: 9.5px; letter-spacing: 0.08em; }
+  .me-pill { max-width: 120px; }
+  .top-right { gap: 6px; }
+}
