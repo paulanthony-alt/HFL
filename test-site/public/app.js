@@ -401,6 +401,156 @@ function renderChrome(tab) {
   $('#me-pill').innerHTML = m ? `${avatar(m, 'xs')} ${h(nick(m))}` : 'Who are you?';
   if (m) { hydrateImages(); announceUnlocks(m); }
   document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
+  renderTicker();
+}
+
+// ---------------------------------------------------------------------------
+// Primetime look: broadcast ticker, matchup hero, menu tiles, scouting report
+
+const abbr = (name) => String(name || '').replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase() || '---';
+const sideColor = (g, side) => seasonTeams(S.db).find((t) => t.id === g.teamIds?.[side])?.color || (side === 'A' ? 'var(--teamA)' : 'var(--teamB)');
+
+// The scrolling bottom line under the header, like a TV ticker.
+function renderTicker() {
+  const el = $('#ticker');
+  if (!el) return;
+  const games = gamesSorted();
+  const items = [];
+  const score = (g, tag) => {
+    const { summary } = gameInfo(g);
+    const w = summary.winner;
+    const t = (side) => `<span class="tk-team ${w === side ? 'win' : ''}" style="--tc:${h(sideColor(g, side))}">${h(abbr(teamName(g, side)))}</span><b>${summary.score[side]}</b>`;
+    return `<a class="tk-item" href="#/g/${g.id}"><em class="${tag === 'Live' ? 'live' : ''}">${tag}</em>${t('A')}${t('B')}</a>`;
+  };
+  for (const g of games.filter((x) => x.status === 'live')) items.push(score(g, 'Live'));
+  const finals = games.filter((x) => x.status === 'final').reverse();
+  if (finals[0]) items.push(score(finals[0], 'Final'));
+  const next = games.find((x) => x.status === 'scheduled');
+  if (next) {
+    const ins = Object.values(next.rsvps).filter((x) => x === 'in').length;
+    items.push(`<a class="tk-item" href="#/g/${next.id}"><em>Next</em><span>${h(teamName(next, 'A'))} vs ${h(teamName(next, 'B'))}</span><b>${h(fmtDate(next.date))}${next.time ? ` · ${h(fmtTime(next.time))}` : ''}</b><span class="muted">${ins} in</span></a>`);
+  }
+  const teams = seasonTeams(S.db);
+  if (teams.length === 2) {
+    const rows = E.seasonStandings(S.db, S.league, S.db.settings.season, teams);
+    items.push(`<a class="tk-item" href="#/stats"><em>Standings</em>${rows.map((r) => { const t = teams.find((x) => x.id === r.id); return `<span class="tk-team" style="--tc:${h(t.color || '#888')}">${h(t.name)}</span><b>${r.w}-${r.l}${r.t ? `-${r.t}` : ''}</b>`; }).join('')}</a>`);
+  }
+  const table = E.seasonTable(S.db, S.league, S.db.settings.season);
+  const mvp = Object.entries(table).sort((a, b) => E.mvpScore(b[1]) - E.mvpScore(a[1]))[0];
+  if (mvp && E.mvpScore(mvp[1]) > 0) items.push(`<a class="tk-item" href="#/stats"><em>MVP race</em><span>${h(nick(mvp[0]))}</span><b>${Math.round(E.mvpScore(mvp[1]))} pts</b></a>`);
+  const potw = S.awards.potw.at(-1);
+  if (potw) items.push(`<a class="tk-item" href="#/awards"><em>Player of the week</em><span>${h(nick(potw.id))}</span><b>${h(statLine(potw.stats))}</b></a>`);
+  const top = activePlayers().map((p) => p.id).sort((a, b) => ovr(b) - ovr(a))[0];
+  if (top) items.push(`<a class="tk-item" href="#/p/${top}"><em>Top OVR</em><span>${h(nick(top))}</span><b>${ovr(top)}</b></a>`);
+  const html = items.join('<i class="tk-sep" aria-hidden="true"></i>');
+  if (el.dataset.html === html) return; // unchanged: don't restart the scroll
+  el.dataset.html = html;
+  el.hidden = !items.length;
+  // Two copies side by side so the scroll loops without a gap.
+  el.innerHTML = `<span class="tk-label">HFL</span><div class="tk-viewport"><div class="tk-track" style="--tk-dur:${Math.max(18, items.length * 7)}s"><div class="tk-run">${html}<i class="tk-sep" aria-hidden="true"></i></div><div class="tk-run" aria-hidden="true">${html}<i class="tk-sep"></i></div></div></div>`;
+}
+
+// Next-game matchup banner: team colors, records, captains, kickoff countdown.
+function matchupHero(g) {
+  const teams = seasonTeams(S.db);
+  const rows = teams.length === 2 ? E.seasonStandings(S.db, S.league, g.season || S.db.settings.season, teams) : [];
+  const side = (k) => {
+    const t = teams.find((x) => x.id === g.teamIds?.[k]);
+    const r = rows.find((x) => x.id === t?.id);
+    const ids = g.teams[k].length ? g.teams[k] : (t?.players || []);
+    const avg = ids.length ? Math.round(ids.reduce((a, id) => a + ovr(id), 0) / ids.length) : null;
+    const cap = t ? seasonCaptain(S.db, t, S.league) : null;
+    return `
+      <div class="mu-side mu-${k}">
+        <span class="mu-rec">${r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '&nbsp;'}</span>
+        <b class="mu-name" style="--len:${Math.max(6, teamName(g, 'A').length, teamName(g, 'B').length)}">${h(teamName(g, k))}</b>
+        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}</span>
+      </div>`;
+  };
+  const days = Math.round((Date.parse(`${g.date}T00:00`) - Date.parse(`${localToday()}T00:00`)) / 864e5);
+  const when = days <= 0 ? 'Game day' : days === 1 ? 'Tomorrow' : `In ${days} days`;
+  return `
+    <div class="mu" style="--ca:${h(sideColor(g, 'A'))};--cb:${h(sideColor(g, 'B'))}">
+      ${side('A')}
+      <div class="mu-vs"><span><b>VS</b></span></div>
+      ${side('B')}
+      <div class="mu-foot"><span class="mu-when">${when}</span><span>${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}${g.time ? ` · ${h(fmtTime(g.time))}` : ''}</span>${(() => {
+        const wp = g.teams.A.length && g.teams.B.length ? gameInfo(g).winProbA ?? 0.5 : null;
+        return wp === null ? '' : `<span class="mu-odds">Win odds <b style="color:${h(sideColor(g, 'A'))}">${h(abbr(teamName(g, 'A')))} ${pct(wp)}</b> <b style="color:${h(sideColor(g, 'B'))}">${h(abbr(teamName(g, 'B')))} ${pct(1 - wp)}</b></span>`;
+      })()}</div>
+    </div>`;
+}
+
+// Madden-style menu tiles on the home screen.
+const TILE_ICONS = {
+  stats: '<path d="M3 20.5h18M6.5 17V11M12 17V5.5M17.5 17V8.5"/>',
+  cards: '<rect x="8" y="2.8" width="11.5" height="15.5" rx="2"/><path d="M5 6.8v12.4a2 2 0 0 0 2 2h9"/><path d="M11.5 13.5l2.2-5 2.3 5"/>',
+  plays: '<circle cx="6" cy="17.5" r="2.8"/><path d="M15.5 3.5l4.5 4.5M20 3.5L15.5 8"/><path d="M8.6 15.6c3.4-1.4 5.8-4 6.8-7.3" stroke-dasharray="2.2 2.4"/>',
+  fame: '<path d="M8 3.5h8v5.5a4 4 0 0 1-8 0z"/><path d="M8 5.5H5a3 3 0 0 0 3.3 4.4M16 5.5h3a3 3 0 0 1-3.3 4.4M12 13v3.5M8.5 20.5h7M9.5 16.5h5v4h-5z"/>',
+  awards: '<circle cx="12" cy="9" r="5.5"/><path d="M8.5 13.5L7 21l5-2.5 5 2.5-1.5-7.5"/>',
+  rules: '<path d="M6 3.5h9.5L19 7v13.5H6z"/><path d="M15.5 3.5V7H19"/><path d="M9 11h7M9 14.3h7M9 17.6h4.5"/>',
+  wall: '<path d="M4 5h16v11H10l-6 4.5z"/><path d="M8 9h8M8 12.3h5"/>',
+  key: '<path d="M4 6h16M4 12h10M4 18h13"/><circle cx="19" cy="12" r="2"/>',
+};
+function hubTiles() {
+  const table = E.seasonTable(S.db, S.league, S.db.settings.season);
+  const mvp = Object.entries(table).sort((a, b) => E.mvpScore(b[1]) - E.mvpScore(a[1]))[0];
+  const roster = activePlayers().map((p) => p.id).sort((a, b) => ovr(b) - ovr(a));
+  const potw = S.awards.potw.at(-1);
+  const rules = (S.db.settings.rules || []).length;
+  const tile = (href, icon, title, sub, { big = false, faces = [] } = {}) => `
+    <a class="tile ${big ? 'tile-big' : ''}" href="${href}">
+      <svg class="tile-ic" viewBox="0 0 24 24" aria-hidden="true">${TILE_ICONS[icon]}</svg>
+      ${faces.length ? `<span class="tile-faces">${faces.map((id) => avatar(id, big ? 'lg' : '')).join('')}</span>` : ''}
+      <span class="tile-txt"><b>${title}</b><small>${sub}</small></span>
+      <span class="tile-go" aria-hidden="true">›</span>
+    </a>`;
+  return `
+    ${sec('League hub')}
+    <nav class="tiles" aria-label="League hub">
+      ${tile('#/stats', 'stats', 'Leaderboards', mvp && E.mvpScore(mvp[1]) > 0 ? `MVP race: ${h(nick(mvp[0]))} · ${Math.round(E.mvpScore(mvp[1]))} pts` : 'Season stats & standings', { big: true, faces: mvp ? [mvp[0]] : [] })}
+      ${tile('#/cards', 'cards', 'Player cards', roster.length ? `${roster.length} players · top OVR ${ovr(roster[0])}` : 'Build the roster', { faces: roster.slice(0, 3) })}
+      ${tile('#/plays', 'plays', 'Playbook', `${S.db.plays.length} play${S.db.plays.length === 1 ? '' : 's'} drawn up`)}
+      ${tile('#/awards', 'awards', 'Awards', potw ? `POTW: ${h(nick(potw.id))}` : 'MVP, POTW & more')}
+      ${tile('#/fame', 'fame', 'Hall of Fame', `${S.db.fame.length} enshrined`)}
+      ${tile('#/rules', 'rules', 'Rulebook', `${rules} rule${rules === 1 ? '' : 's'}`)}
+      ${tile('#/key', 'key', 'Ratings key', '17 Madden-style ratings')}
+    </nav>`;
+}
+
+// Scouting report: where he ranks against the crew on what matters for his position
+// (percentiles, like a pro scouting sheet).
+function scoutingSection(id) {
+  const p = P(id);
+  const crew = activePlayers().map((x) => x.id);
+  if (crew.length < 3) return '';
+  const others = crew.filter((x) => x !== id);
+  const pctile = (mine, vals) => Math.round(((vals.filter((v) => v < mine).length + vals.filter((v) => v === mine).length / 2) / vals.length) * 100);
+  const tier = (q) => (q >= 90 ? 'p-elite' : q >= 70 ? 'p-high' : q >= 40 ? 'p-mid' : q >= 20 ? 'p-low' : 'p-poor');
+  const a = attrsOf(id);
+  const keys = E.keyAttrs(p.position || 'ATH', 6);
+  const ovrRank = crew.filter((x) => ovr(x) > ovr(id)).length + 1;
+  const row = (label, short, q, val) => `
+    <div class="pc-row">
+      <span class="pc-k">${short}</span><span class="pc-l">${h(label)}</span>
+      <span class="pc-track"><i class="${tier(q)}" style="width:${Math.max(3, q)}%"></i><b class="pc-dot ${tier(q)}" style="left:${Math.max(3, q)}%">${q}</b></span>
+      <span class="pc-v">${val}</span>
+    </div>`;
+  return `
+    <section class="card scouting">
+      <div class="row-between"><h3>Scouting report</h3><span class="muted small">vs the crew</span></div>
+      <div class="pc-head">
+        <div><small>Crew rank</small><b>#${ovrRank}<em>of ${crew.length}</em></b></div>
+        <div><small>Position</small><b>${h(p.position || 'ATH')}</b></div>
+        <div><small>OVR</small><b class="g-${grade(ovr(id))}">${ovr(id)}</b></div>
+      </div>
+      <div class="chips-label">Percentile among the crew · key ${h(p.position || 'ATH')} traits</div>
+      <div class="pc-list">
+        ${row('Overall', 'OVR', pctile(ovr(id), others.map(ovr)), ovr(id))}
+        ${keys.map((k) => row(attrMeta[k].label, attrMeta[k].short, pctile(a[k], others.map((x) => attrsOf(x)[k])), a[k])).join('')}
+      </div>
+      <div class="pc-legend"><span class="p-poor">Bottom</span><span class="p-low"></span><span class="p-mid">Avg</span><span class="p-high"></span><span class="p-elite">Top</span></div>
+    </section>`;
 }
 
 const needMe = () => {
@@ -423,9 +573,9 @@ function scoreboard(g) {
   const status = g.status === 'live' ? '<span class="chip live">Live</span>' : g.status === 'final' ? '<span class="chip">Final</span>' : '';
   return `
     <div class="scoreboard">
-      <div class="sb-team sb-A ${w === 'A' ? 'win' : ''} ${w && w !== 'A' ? 'lose' : ''}"><div class="sb-name">${h(teamName(g, 'A'))}</div><div class="sb-score ${bump('A')}">${summary.score.A}</div></div>
+      <div class="sb-team sb-A ${w === 'A' ? 'win' : ''} ${w && w !== 'A' ? 'lose' : ''}"><div class="sb-name" style="--len:${Math.max(5, teamName(g, 'A').length)}">${h(teamName(g, 'A'))}</div><div class="sb-score ${bump('A')}">${summary.score.A}</div></div>
       <div class="sb-mid">${status}<div class="sb-date">${h(fmtDate(g.date))}</div></div>
-      <div class="sb-team sb-B ${w === 'B' ? 'win' : ''} ${w && w !== 'B' ? 'lose' : ''}"><div class="sb-name">${h(teamName(g, 'B'))}</div><div class="sb-score ${bump('B')}">${summary.score.B}</div></div>
+      <div class="sb-team sb-B ${w === 'B' ? 'win' : ''} ${w && w !== 'B' ? 'lose' : ''}"><div class="sb-name" style="--len:${Math.max(5, teamName(g, 'B').length)}">${h(teamName(g, 'B'))}</div><div class="sb-score ${bump('B')}">${summary.score.B}</div></div>
     </div>`;
 }
 
@@ -491,7 +641,7 @@ const empty = ({ art = 'field', title, text = '', cta = '' }) =>
   `<div class="empty"><div class="empty-art">${ART[art]}</div><h3>${title}</h3>${text ? `<p>${text}</p>` : ''}${cta}</div>`;
 const sec = (title, extra = '') => `<div class="sec"><h3>${title}</h3>${extra}</div>`;
 const pageHead = (kicker, title, right = '') =>
-  `<header class="page-head"><div><div class="kicker">${kicker}</div><h1 class="page-title">${title}</h1></div>${right}</header>`;
+  `<header class="page-head" data-wm="${String(title).replace(/<[^>]*>/g, '')}"><div><div class="kicker">${kicker}</div><h1 class="page-title">${title}</h1></div>${right}</header>`;
 const rankBadge = (i) => `<span class="rk rk-${Math.min(i + 1, 4)}">${i + 1}</span>`;
 const PIN = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>';
 const ticket = (iso, cls = '') => {
@@ -533,7 +683,8 @@ function viewHome() {
         <span class="grow"><b>${g.status === 'live' ? '<span class="chip live">Live</span> ' : ''}${h(fmtDate(g.date, { weekday: 'long' }))}${g.time ? ` · ${h(fmtTime(g.time))}` : ''}</b><span class="muted small">${h(g.location || 'Location TBD')}</span></span>
         <span class="row-meta"><b>${Object.values(g.rsvps).filter((x) => x === 'in').length}</b> in</span>
       </a>`).join('') : ''}
-    ${current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}`;
+    ${current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}
+    ${hubTiles()}`;
 
   const rest = finals.filter((g) => g !== current);
   const potw = S.awards.potw.at(-1);
@@ -609,7 +760,7 @@ function gamePanel(g) {
       <a class="icon-btn" href="#/g/${g.id}" aria-label="Game details">›</a>
     </div>`;
   const body = g.status === 'scheduled' ? rsvpSection(g) + teamsSection(g) : g.status === 'live' ? liveSection(g) : finalSection(g);
-  return `<section class="card game-card is-${g.status}">${head}${body}</section>`;
+  return `<section class="card game-card is-${g.status}">${head}${g.status === 'scheduled' ? matchupHero(g) : ''}${body}</section>`;
 }
 
 function rsvpSection(g) {
@@ -1762,6 +1913,7 @@ function viewCard(id) {
       return x ? `<a class="btn block wr-open" href="#/wrapped/${id}?s=${encodeURIComponent(x)}">🎁 ${id === me() ? 'My' : `${h(nick(id))}'s`} Season ${h(x)} Wrapped${seasonOver(S.db, x) ? '' : ' (so far)'}</a>` : '';
     })()}
 
+    ${scoutingSection(id)}
     ${ratingsSection(id, log)}
     ${nflSection(id)}
     ${progressionSection(id)}
