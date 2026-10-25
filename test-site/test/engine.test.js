@@ -87,6 +87,23 @@ test('computeLeague: ratings move with your own stats, not with winning or losin
   assert.equal(won.ovr.wb, lost.ovr.wb);
 });
 
+test('MVP points: positional value, a receiver or runner scoring 3 is worth more than 3 TD passes', () => {
+  const s = (o) => ({ ...E.blankStats(), ...o });
+  const qb = s({ att: 6, comp: 4, passTD: 3 });
+  const wr = s({ rec: 3, targets: 3, recTD: 3 });
+  const rb = s({ rushTD: 3 });
+  assert.equal(E.impactOf(qb), 7, '3 TD passes + a completion: 2 each, ¼ per completion');
+  assert.equal(E.impactOf(wr), 21, '3 TD catches: 7 each');
+  assert.equal(E.impactOf(rb), 18);
+  assert.ok(E.impactOf(wr) >= 3 * E.impactOf(qb));
+  // the QB who throws every TD on a big day can still lead, but it takes a lot more
+  const bigQb = s({ att: 20, comp: 16, passTD: 8 });
+  assert.ok(E.impactOf(bigQb) > E.impactOf(s({ rec: 4, targets: 4, recTD: 2 })));
+  assert.ok(E.impactOf(s({ att: 6, comp: 3, passTD: 3, intThrown: 3 })) < 1, 'a pick thrown cancels a TD pass');
+  const row = (o) => ({ ...s(o), mvps: 0, w: 1 });
+  assert.ok(E.mvpScore(row({ rec: 3, recTD: 3 })) > E.mvpScore(row({ att: 6, comp: 4, passTD: 3 })), 'MVP race follows');
+});
+
 test('computeLeague ignores unfinished games for ratings', () => {
   const players = [{ id: 'qa', startOvr: 70 }, { id: 'qb', startOvr: 70 }];
   const L = E.computeLeague({ players, games: [game({ status: 'live', teams: { A: ['qa'], B: ['qb'] }, events: [ev('rush_td', 'qa', null, 'A')] })] });

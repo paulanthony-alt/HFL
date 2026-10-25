@@ -123,10 +123,19 @@ export function qbRating(s) {
 
 // One number for "how much did this guy swing the game". Drives the MVP race and
 // the individual part of rating changes.
+// Stat impact, used for the MVP race, Player of the Week and the game recap. Positional
+// value: the QB is on every passing play, so his numbers pile up (a team's TD passes all go
+// to him, its TD catches get split between everyone else). His passing stats count half,
+// which makes a receiver's or runner's 3 TDs worth about three times a QB's 3 TD passes.
+export const MVP_POINTS = {
+  td: 6, catch: 1, int: 5, sack: 3, drop: -2, // scoring, catching, defense
+  passTD: 2, comp: 0.25, intThrown: -2, sacked: -0.5, // QB: half value
+};
 export function impactOf(s) {
+  const P = MVP_POINTS;
   return (
-    totalTDs(s) * 6 + s.passTD * 4 + s.comp * 0.5 + s.rec * 1 + s.defInt * 5 + s.sacks * 3 +
-    -s.intThrown * 4 - s.drops * 2 - s.sacked
+    totalTDs(s) * P.td + s.rec * P.catch + s.defInt * P.int + s.sacks * P.sack + s.drops * P.drop +
+    s.passTD * P.passTD + s.comp * P.comp + s.intThrown * P.intThrown + s.sacked * P.sacked
   );
 }
 

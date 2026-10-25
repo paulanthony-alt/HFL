@@ -1416,7 +1416,7 @@ function viewStats() {
   if (tab === 'mvp') {
     list = rows.filter((r) => r.s.gp).sort((a, b) => E.mvpScore(b.s) - E.mvpScore(a.s));
     cols = [['Pts', (s) => Math.round(E.mvpScore(s))], ['👑', (s) => s.mvps], ['Rec', record], ['TD', E.totalTDs]];
-    note = 'MVP points = stat impact + 10 per crowd MVP + 2 per win.';
+    note = 'MVP points: TD catch 7, TD run 6, pick six 11, INT 5, sack 3, catch 1, drop −2. QB stats count half because he’s on every play: TD pass 2, completion ¼, pick thrown −2. Plus 10 per crowd MVP and 2 per win.';
   } else if (tab === 'tds') {
     list = rows.filter((r) => E.totalTDs(r.s) || r.s.passTD).sort((a, b) => E.totalTDs(b.s) - E.totalTDs(a.s) || b.s.passTD - a.s.passTD);
     cols = [['TD', E.totalTDs], ['Rec', (s) => s.recTD], ['Rush', (s) => s.rushTD], ['Def', (s) => s.defTD], ['Pass', (s) => s.passTD]];
