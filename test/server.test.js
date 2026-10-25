@@ -422,7 +422,7 @@ test('roster v3: Will Walsh joins, and he and the Giffinland Coach go into the g
     const live = res.db.games.find((g) => g.id === 'live1');
     assert.deepEqual(live.teams.B, ['p0', 'p1', will.id, 'p4'], 'Will and the Giffinland Coach (Evan) play for Giffinland today');
     assert.deepEqual(live.teams.A, ['p2', 'p3']);
-    assert.deepEqual(res.result.placed.map((x) => [x.name, x.team]), [['Will Walsh', 'Giffinland'], ['the giffinland coach', 'Giffinland']]);
+    assert.deepEqual(res.result.placed.map((x) => [x.name, x.team]), [['Will Walsh', 'Giffinland'], ['Evan', 'Giffinland']]);
     assert.deepEqual(res.db.games.find((g) => g.id === 'next').teams, { A: [], B: [] }, 'next week is untouched');
     assert.deepEqual(res.db.settings.teams.find((t) => t.id === 'giffinland').players, ['p0', 'p1'], 'for this game only: the season team is unchanged');
     assert.equal(again.result.changed, false, 'one time only');
@@ -441,6 +441,48 @@ test('roster v3: Will Walsh joins, and he and the Giffinland Coach go into the g
     assert.deepEqual(res.result.names, ['Will Walsh']);
     assert.deepEqual(res.result.placed, []);
     assert.deepEqual(res.db.games.map((x) => x.teams), [{ A: [], B: [] }, { A: ['p2'], B: ['p0'] }]);
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('roster v4: Logan (by name) and Will go onto Giffinland in the game on right now, even if v3 already ran', async () => {
+  const { localToday } = await import('../public/league.js');
+  const today = localToday();
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-roster4-'));
+  const teams = [
+    { id: 'giffinland', name: 'Giffinland', color: '#ff5a1f', season: '2026', players: ['p0'] },
+    { id: 'sostreville', name: 'Sostreville', color: '#36c8ff', season: '2026', players: ['p1'] },
+  ];
+  const write = (players, games) => fs.writeFileSync(path.join(d, 'db.json'), JSON.stringify({
+    version: 9, settings: { crewName: 'HFL', season: '2026', rosterVersion: 3, teamsVersion: 1, teams },
+    players: players.map(([id, name, nickname = '']) => ({ id, name, nickname, active: true })), games, posts: [], plays: [], fame: [],
+  }));
+  const game = (id, status, date) => ({ id, date, status, season: '2026', rsvps: {}, teams: { A: ['p0'], B: ['p1'] }, teamIds: { A: 'giffinland', B: 'sostreville' },
+    teamNames: { A: 'Giffinland', B: 'Sostreville' }, events: [], mvpVotes: {} });
+  const setup = async () => {
+    const s = await createHflServer({ dataDir: d, passcode: '' });
+    await new Promise((r) => s.listen(0, r));
+    try { return await fetch(`http://localhost:${s.address().port}/api/setup-roster`, { method: 'POST' }).then((r) => r.json()); } finally { s.closeAllConnections(); s.close(); }
+  };
+  const crew = [['p0', 'Paul'], ['p1', 'Max'], ['loganberry', 'Loganberry'], ['will', 'Will Walsh'], ['logan', 'Logan', 'Coach G']];
+  try {
+    // v3 already ran (Will's here) but his nickname didn't match and nobody went in. Game is live.
+    write(crew, [game('live1', 'live', today), game('next', 'scheduled', '2099-01-01')]);
+    let res = await setup();
+    assert.deepEqual(res.result.names, [], 'nobody new');
+    assert.equal(res.result.changed, true);
+    assert.deepEqual(res.db.games[0].teams, { A: ['p0', 'logan', 'will'], B: ['p1'] }, 'Logan and Will on Giffinland; Loganberry is not Logan');
+    assert.deepEqual(res.result.placed.map((x) => x.name), ['Logan', 'Will Walsh']);
+    assert.deepEqual(res.db.games[1].teams, { A: ['p0'], B: ['p1'] }, 'next week untouched');
+
+    // Full name works too, and so does a game that already ended today.
+    const done = game('done', 'final', today);
+    done.teams.A.push('will');
+    write([...crew.slice(0, 4), ['logan', 'Logan Smith']], [game('old', 'final', '2000-01-01'), done]);
+    res = await setup();
+    assert.deepEqual(res.db.games.find((g) => g.id === 'done').teams.A, ['p0', 'will', 'logan'], 'added once each');
+    assert.deepEqual(res.db.games.find((g) => g.id === 'old').teams.A, ['p0']);
   } finally {
     fs.rmSync(d, { recursive: true, force: true });
   }

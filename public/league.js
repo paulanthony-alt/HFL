@@ -15,12 +15,14 @@ export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'M
 // the new guys listed here: nobody is ever removed again.
 export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'], 3: ['Will Walsh'] };
 // One-time: put guys into the game that's on right now (live, or today's if it hasn't kicked
-// off), for that game only. Found by name or by nickname; he plays for his own season team if
-// he has one, otherwise for `team`. No game on right now: nothing happens.
+// off or just ended), for that game only. Found by name (a first name like "Logan" matches
+// "Logan" or "Logan Smith") or by nickname; he plays for his own season team if he has one,
+// otherwise for `team`. Already in that game, or no game today: nothing happens.
 export const ROSTER_GAME_SPOTS = {
   3: [{ name: 'Will Walsh', team: 'giffinland' }, { nickname: 'The Giffinland Coach', team: 'giffinland' }],
+  4: [{ name: 'Logan', team: 'giffinland' }, { name: 'Will Walsh', team: 'giffinland' }],
 };
-export const ROSTER_VERSION = 3;
+export const ROSTER_VERSION = 4;
 
 // Season teams. Set up once (settings.teamsVersion); after that league admins edit them in
 // Settings. Games line them up automatically: RSVP in and you're on your team's side.
@@ -51,7 +53,13 @@ const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#
 const nameKey = (s) => String(s || '').toLowerCase().replace(/^\s*the\s+/, '').replace(/[^a-z0-9]/g, '');
 // The game on right now: live, or today's if it hasn't kicked off yet.
 const currentGame = (db) => db.games.find((g) => g.status === 'live')
-  || db.games.find((g) => g.status === 'scheduled' && g.date === localToday()) || null;
+  || db.games.find((g) => g.status === 'scheduled' && g.date === localToday())
+  || db.games.filter((g) => g.status === 'final' && g.date === localToday()).at(-1) || null;
+const nameMatches = (player, name) => {
+  const have = String(player.name || '').trim().toLowerCase();
+  const want = name.trim().toLowerCase();
+  return have === want || (!want.includes(' ') && have.split(/\s+/)[0] === want);
+};
 // ROSTER_GAME_SPOTS for one roster version. Returns who went where.
 function placeInCurrentGame(db, spots = []) {
   const g = currentGame(db);
@@ -59,7 +67,7 @@ function placeInCurrentGame(db, spots = []) {
   const placed = [];
   for (const spot of spots) {
     const p = db.players.find((x) => x.active !== false && (spot.name
-      ? String(x.name || '').trim().toLowerCase() === spot.name.toLowerCase()
+      ? nameMatches(x, spot.name)
       : nameKey(x.nickname) === nameKey(spot.nickname)));
     if (!p || g.teams.A.includes(p.id) || g.teams.B.includes(p.id)) continue;
     const own = seasonTeamOf(db, p.id);
@@ -67,7 +75,7 @@ function placeInCurrentGame(db, spots = []) {
     if (!side) continue;
     g.teams[side].push(p.id);
     if (g.status === 'scheduled') g.rsvps[p.id] = 'in';
-    placed.push({ id: p.id, name: p.nickname || p.name, side, team: g.teamNames?.[side] || side });
+    placed.push({ id: p.id, name: p.name, side, team: g.teamNames?.[side] || side });
   }
   return placed;
 }
