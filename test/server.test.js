@@ -232,20 +232,20 @@ test('roster setup: keeps the crew, clears everyone else, runs only once', async
     const first = await post('/api/setup-roster');
     assert.equal(first.result.changed, true);
     const { db } = first;
-    assert.deepEqual(db.players.map((p) => p.name), ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah'], 'names tidied to the roster spelling');
+    assert.deepEqual(db.players.map((p) => p.name), ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah', 'Will Walsh'], 'names tidied to the roster spelling');
     assert.equal(db.players.find((p) => p.name === 'Paul').id, paul.result.id, 'existing player kept with his stats and nickname');
     assert.equal(db.players.find((p) => p.name === 'Paul').nickname, 'Big P');
     assert.equal(db.games.length, 0, 'demo games gone');
     assert.equal(db.posts.length, 0, 'demo posts gone');
     assert.equal(db.plays.length, 0, 'demo plays gone');
     assert.equal(db.fame.length, 0, 'demo hall of fame gone');
-    assert.equal(new Set(db.players.map((p) => p.color)).size, 14, 'everyone gets their own card color');
+    assert.equal(new Set(db.players.map((p) => p.color)).size, 15, 'everyone gets their own card color');
 
     const newbie = await post('/api/players', { name: 'Cousin Joey' });
     const again = await post('/api/setup-roster');
     assert.equal(again.result.changed, false);
     assert.ok(again.db.players.some((p) => p.id === newbie.result.id), 'players added later are never removed');
-    assert.equal(again.db.players.length, 15);
+    assert.equal(again.db.players.length, 16);
   } finally {
     s.closeAllConnections();
     s.close();
@@ -364,7 +364,7 @@ test("games can't start before game day, and an early start can be undone", asyn
   await call('DELETE', `/api/games/${g.id}`);
 });
 
-test('roster update: an already set-up league just gains Teddy, Bobby and Noah', async () => {
+test('roster update: an already set-up league just gains Teddy, Bobby, Noah and Will', async () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-roster2-'));
   fs.writeFileSync(path.join(d, 'db.json'), JSON.stringify({
     version: 5, settings: { crewName: 'HFL', season: '2026', rosterVersion: 1 },
@@ -375,14 +375,73 @@ test('roster update: an already set-up league just gains Teddy, Bobby and Noah',
   await new Promise((r) => s.listen(0, r));
   try {
     const res = await (await fetch(`http://localhost:${s.address().port}/api/setup-roster`, { method: 'POST' })).json();
-    assert.deepEqual(res.result.names, ['Teddy', 'Bobby']);
+    assert.deepEqual(res.result.names, ['Teddy', 'Bobby', 'Will Walsh']);
     const names = res.db.players.map((p) => p.name);
-    assert.deepEqual(names, ['Kellen', 'Max', 'Paul', 'Cousin Joey', 'noah', 'Teddy', 'Bobby'], 'nobody removed, Noah not duplicated');
+    assert.deepEqual(names, ['Kellen', 'Max', 'Paul', 'Cousin Joey', 'noah', 'Teddy', 'Bobby', 'Will Walsh'], 'nobody removed, Noah not duplicated');
+    assert.deepEqual(res.db.games[0].teams, { A: [], B: [] }, "a game that isn't today is left alone");
     assert.equal(res.db.games[0].rsvps.p0, 'in', 'games and RSVPs untouched');
     const again = await (await fetch(`http://localhost:${s.address().port}/api/setup-roster`, { method: 'POST' })).json();
     assert.equal(again.result.changed, false);
   } finally {
     s.closeAllConnections(); s.close();
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('roster v3: Will Walsh joins, and he and the Giffinland Coach go into the game on right now', async () => {
+  const { localToday } = await import('../public/league.js');
+  const today = localToday();
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'hfl-roster3-'));
+  const crew = ['Paul', 'Ben', 'Max', 'Henry', 'Evan'];
+  const teams = [
+    { id: 'giffinland', name: 'Giffinland', color: '#ff5a1f', season: '2026', players: ['p0', 'p1'] },
+    { id: 'sostreville', name: 'Sostreville', color: '#36c8ff', season: '2026', players: ['p2', 'p3'] },
+  ];
+  const game = (id, status, date, A, B) => ({ id, date, status, season: '2026', rsvps: {}, teams: { A, B }, teamIds: { A: 'sostreville', B: 'giffinland' },
+    teamNames: { A: 'Sostreville', B: 'Giffinland' }, events: [], mvpVotes: {} });
+  const write = (games, coachNick = 'the giffinland coach') => fs.writeFileSync(path.join(d, 'db.json'), JSON.stringify({
+    version: 9, settings: { crewName: 'HFL', season: '2026', rosterVersion: 2, teamsVersion: 1, teams },
+    players: crew.map((name, i) => ({ id: `p${i}`, name, nickname: name === 'Evan' ? coachNick : '', active: true })),
+    games, posts: [], plays: [], fame: [],
+  }));
+  const setup = async () => {
+    const s = await createHflServer({ dataDir: d, passcode: '' });
+    await new Promise((r) => s.listen(0, r));
+    try {
+      const post = () => fetch(`http://localhost:${s.address().port}/api/setup-roster`, { method: 'POST' }).then((r) => r.json());
+      return [await post(), await post()];
+    } finally { s.closeAllConnections(); s.close(); }
+  };
+  try {
+    // A live game, Giffinland on side B; plus next week's game.
+    write([game('live1', 'live', today, ['p2', 'p3'], ['p0', 'p1']), game('next', 'scheduled', '2099-01-01', [], [])]);
+    let [res, again] = await setup();
+    assert.deepEqual(res.result.names, ['Will Walsh']);
+    const will = res.db.players.find((p) => p.name === 'Will Walsh');
+    assert.equal(will.nickname, '', 'Will gets no nickname of his own');
+    const live = res.db.games.find((g) => g.id === 'live1');
+    assert.deepEqual(live.teams.B, ['p0', 'p1', will.id, 'p4'], 'Will and the Giffinland Coach (Evan) play for Giffinland today');
+    assert.deepEqual(live.teams.A, ['p2', 'p3']);
+    assert.deepEqual(res.result.placed.map((x) => [x.name, x.team]), [['Will Walsh', 'Giffinland'], ['the giffinland coach', 'Giffinland']]);
+    assert.deepEqual(res.db.games.find((g) => g.id === 'next').teams, { A: [], B: [] }, 'next week is untouched');
+    assert.deepEqual(res.db.settings.teams.find((t) => t.id === 'giffinland').players, ['p0', 'p1'], 'for this game only: the season team is unchanged');
+    assert.equal(again.result.changed, false, 'one time only');
+    assert.equal(again.db.games.find((g) => g.id === 'live1').teams.B.length, 4, 'nobody added twice');
+
+    // Today's game hasn't kicked off yet: they're RSVP'd in on Giffinland's side. Nickname matches however it's typed.
+    write([game('today', 'scheduled', today, ['p2'], ['p0'])], 'Giffinland Coach');
+    [res] = await setup();
+    const g = res.db.games[0];
+    assert.equal(g.teams.B.length, 3);
+    assert.equal(g.rsvps.p4, 'in');
+
+    // Nothing on today: Will still joins the league, nobody gets put in a game.
+    write([game('later', 'scheduled', '2099-01-01', [], []), game('old', 'final', '2000-01-01', ['p2'], ['p0'])]);
+    [res] = await setup();
+    assert.deepEqual(res.result.names, ['Will Walsh']);
+    assert.deepEqual(res.result.placed, []);
+    assert.deepEqual(res.db.games.map((x) => x.teams), [{ A: [], B: [] }, { A: ['p2'], B: ['p0'] }]);
+  } finally {
     fs.rmSync(d, { recursive: true, force: true });
   }
 });

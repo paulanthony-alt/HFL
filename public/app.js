@@ -348,8 +348,11 @@ function ensureRoster() {
   api('POST', '/api/setup-roster')
     .then((r) => {
       if (!r?.changed) return;
+      const list = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0]);
       const n = r.names || [];
-      toast(n.length ? `🏈 ${n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n.at(-1)}` : n[0]} joined the HFL` : '🏈 The HFL roster is set. Tap “Who are you?” to pick yourself');
+      const inGame = (r.placed || []).map((x) => `${x.name} (${x.team})`);
+      const joined = n.length ? `🏈 ${list(n)} joined the HFL` : inGame.length ? '🏈' : '🏈 The HFL roster is set. Tap “Who are you?” to pick yourself';
+      toast(inGame.length ? `${joined}${n.length ? '.' : ''} Added to today's game: ${list(inGame)}` : joined);
     })
     .catch(() => {})
     .finally(() => { ensureRoster.running = false; ensureTeams(); });
@@ -1124,7 +1127,23 @@ function liveSection(g) {
       ${sec('Play by play', `<span class="sec-link muted">${events.length} logged</span>`)}
       ${events.length ? `<ul class="feed">${events.map((ev) => eventRow(g, ev, true)).join('')}</ul>` : `<div class="empty-inline">${ART.whistle}<span>No plays logged yet. Pick a play type above to start.</span></div>`}
       <details class="card-lite"><summary>Rosters & live box score</summary>${boxScore(g, info)}</details>`}
+    ${lateArrivals(g)}
     <button class="btn block danger-outline" data-a="final" data-g="${g.id}">Final whistle</button>`;
+}
+
+// Someone shows up after kickoff: put him on a team without stopping the game.
+function lateArrivals(g) {
+  const inGame = new Set([...g.teams.A, ...g.teams.B]);
+  const out = activePlayers().filter((p) => !inGame.has(p.id));
+  if (!out.length) return '';
+  return `
+    <details class="card-lite late-add"><summary>Someone show up late? Add him</summary>
+      ${out.map((p) => `
+        <div class="late-row">
+          ${avatar(p.id, 'xs')}<b class="grow">${h(nick(p.id))}</b>
+          ${['A', 'B'].map((side) => `<button class="btn sm ghost" data-a="late-add" data-g="${g.id}" data-p="${p.id}" data-side="${side}">+ ${h(teamName(g, side))}</button>`).join('')}
+        </div>`).join('')}
+    </details>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2825,6 +2844,11 @@ const A = {
     const game = S.db.games.find((x) => x.id === g);
     const side = game.teams.A.length <= game.teams.B.length ? 'A' : 'B';
     run(() => api('PUT', `/api/games/${g}/teams`, { teams: { ...game.teams, [side]: [...game.teams[side], p] } }));
+  },
+  'late-add': ({ g, p, side }) => {
+    const game = S.db.games.find((x) => x.id === g);
+    if (!game || game.teams.A.includes(p) || game.teams.B.includes(p)) return;
+    run(() => api('PUT', `/api/games/${g}/teams`, { teams: { ...game.teams, [side]: [...game.teams[side], p] } }), `${nick(p)} is in for ${teamName(game, side)}`);
   },
   'rename-team': ({ g, side }) => {
     const game = S.db.games.find((x) => x.id === g);

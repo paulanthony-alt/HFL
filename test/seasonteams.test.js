@@ -17,7 +17,7 @@ const id = (n) => n.toLowerCase();
 
 test('season teams: set up once from the names, lined up in every new game', () => {
   const db = setup();
-  db.games.push({ id: 'old', date: '2026-10-10', season: db.settings.season, status: 'scheduled', rsvps: { paul: 'in', max: 'in', evan: 'in' }, teams: { A: ['paul', 'max'], B: ['evan'] }, events: [], mvpVotes: {}, teamNames: { A: 'Shirts', B: 'Skins' } });
+  db.games.push({ id: 'old', date: '2099-10-10', season: db.settings.season, status: 'scheduled', rsvps: { paul: 'in', max: 'in', evan: 'in' }, teams: { A: ['paul', 'max'], B: ['evan'] }, events: [], mvpVotes: {}, teamNames: { A: 'Shirts', B: 'Skins' } });
   const r = call(db, 'POST', '/api/setup-teams');
   assert.deepEqual(r.teams, ['Giffinland', 'Sostreville']);
   assert.deepEqual(db.settings.teams[0].players, HFL_TEAMS[0].players.map(id));
@@ -27,7 +27,7 @@ test('season teams: set up once from the names, lined up in every new game', () 
   assert.deepEqual(old.teams.A, ['paul'], 'already-scheduled game re-lined up by team');
   assert.ok(old.teams.B.includes('max') && old.teams.B.includes('evan'), 'free agent Evan stays where he was');
 
-  const g = call(db, 'POST', '/api/games', { date: '2026-10-17' });
+  const g = call(db, 'POST', '/api/games', { date: '2099-10-17' });
   assert.deepEqual(g.teamIds, { A: 'giffinland', B: 'sostreville' });
   call(db, 'POST', `/api/games/${g.id}/rsvp`, { playerId: 'ben', status: 'in' });
   call(db, 'POST', `/api/games/${g.id}/rsvp`, { playerId: 'kellen', status: 'in' });
@@ -59,7 +59,7 @@ test('season teams: captains, standings and season-long private playbooks', asyn
   assert.equal(seasonCaptain(db, db.settings.teams[0], league), 'lucas');
   assert.equal(seasonCaptain(db, db.settings.teams[1], league), 'kellen');
   // standings
-  const g = call(db, 'POST', '/api/games', { date: '2026-10-17' });
+  const g = call(db, 'POST', '/api/games', { date: '2099-10-17' });
   for (const p of ['ben', 'kellen']) call(db, 'POST', `/api/games/${g.id}/rsvp`, { playerId: p, status: 'in' });
   g.status = 'final';
   g.box = { kellen: { rushTD: 2 }, ben: { rushTD: 1 } };

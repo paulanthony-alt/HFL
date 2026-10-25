@@ -10,11 +10,17 @@ const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
 // The HFL crew. The first time the app opens a league without this roster
 // (settings.rosterVersion), it clears out everyone else and adds these guys.
-export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah'];
+export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah', 'Will Walsh'];
 // Version 1 set up the original crew (and cleared everyone else). Later versions only add
 // the new guys listed here: nobody is ever removed again.
-export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'] };
-export const ROSTER_VERSION = 2;
+export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'], 3: ['Will Walsh'] };
+// One-time: put guys into the game that's on right now (live, or today's if it hasn't kicked
+// off), for that game only. Found by name or by nickname; he plays for his own season team if
+// he has one, otherwise for `team`. No game on right now: nothing happens.
+export const ROSTER_GAME_SPOTS = {
+  3: [{ name: 'Will Walsh', team: 'giffinland' }, { nickname: 'The Giffinland Coach', team: 'giffinland' }],
+};
+export const ROSTER_VERSION = 3;
 
 // Season teams. Set up once (settings.teamsVersion); after that league admins edit them in
 // Settings. Games line them up automatically: RSVP in and you're on your team's side.
@@ -40,7 +46,31 @@ function placeBySeasonTeam(db, g, pid) {
   if (!side || g.teams.A.includes(pid) || g.teams.B.includes(pid)) return;
   g.teams[side].push(pid);
 }
-const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8'];
+const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8', '#14b8a6'];
+// "The Giffinland Coach" → "giffinlandcoach", so a nickname matches however it's typed.
+const nameKey = (s) => String(s || '').toLowerCase().replace(/^\s*the\s+/, '').replace(/[^a-z0-9]/g, '');
+// The game on right now: live, or today's if it hasn't kicked off yet.
+const currentGame = (db) => db.games.find((g) => g.status === 'live')
+  || db.games.find((g) => g.status === 'scheduled' && g.date === localToday()) || null;
+// ROSTER_GAME_SPOTS for one roster version. Returns who went where.
+function placeInCurrentGame(db, spots = []) {
+  const g = currentGame(db);
+  if (!g || !spots.length) return [];
+  const placed = [];
+  for (const spot of spots) {
+    const p = db.players.find((x) => x.active !== false && (spot.name
+      ? String(x.name || '').trim().toLowerCase() === spot.name.toLowerCase()
+      : nameKey(x.nickname) === nameKey(spot.nickname)));
+    if (!p || g.teams.A.includes(p.id) || g.teams.B.includes(p.id)) continue;
+    const own = seasonTeamOf(db, p.id);
+    const side = (own && sideOfTeam(g, own.id)) || sideOfTeam(g, spot.team);
+    if (!side) continue;
+    g.teams[side].push(p.id);
+    if (g.status === 'scheduled') g.rsvps[p.id] = 'in';
+    placed.push({ id: p.id, name: p.nickname || p.name, side, team: g.teamNames?.[side] || side });
+  }
+  return placed;
+}
 const FAME_CATEGORIES = ['best', 'dumb', 'drop'];
 const ROUTE_STYLES = ['route', 'motion', 'block'];
 
@@ -355,8 +385,10 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
           added.push(name);
         }
       }
+      const placed = [];
+      for (let v = have + 1; v <= ROSTER_VERSION; v++) placed.push(...placeInCurrentGame(db, ROSTER_GAME_SPOTS[v]));
       db.settings.rosterVersion = ROSTER_VERSION;
-      return { changed: added.length > 0, removed: 0, added: added.length, names: added };
+      return { changed: added.length > 0 || placed.length > 0, removed: 0, added: added.length, names: added, placed };
     }
     const wanted = new Map(HFL_ROSTER.map((n) => [n.toLowerCase(), n]));
     const keep = new Map(); // roster name → existing player (first one wins)

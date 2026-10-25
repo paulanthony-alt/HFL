@@ -1403,3 +1403,8 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .st-row { display: flex !important; flex-direction: row !important; align-items: center; gap: 10px; text-transform: none !important; letter-spacing: 0 !important; font: 600 15px/1.2 var(--body) !important; color: var(--text) !important; }
 .st-row select { width: 150px; flex: none; }
 .st-cap { margin: 3px 0 0 18px; }
+
+/* late arrivals during a live game */
+.late-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.late-row:first-of-type { border-top: 0; }
+.late-row b { font-size: 15px; min-width: 8ch; }
