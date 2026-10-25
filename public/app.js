@@ -1314,7 +1314,7 @@ function finalSection(g) {
     ${mvpBlock(g)}
     ${sec('Box score')}
     ${boxScore(g, info)}
-    <p class="muted small">▲▼ = OVR change from this game (result vs. the odds, plus how much he balled out).</p>
+    <p class="muted small">▲▼ = OVR change from this game, from his own stats (winning or losing doesn't count).</p>
     ${g.box ? boxModeCard(g) : `
     <details class="card-lite"><summary>Play by play (${g.events.length})</summary>
       <ul class="feed">${[...g.events].reverse().map((ev) => eventRow(g, ev, !!me() && ev.by === me())).join('')}</ul>
@@ -1621,7 +1621,7 @@ function ratingsSection(id, log) {
       <div class="pos-ovrs">${Object.entries(byPos).map(([pos, o]) => `
         <span class="pos-ovr ${pos === (p.position || 'ATH') ? 'cur' : ''} ${pos === best ? 'best' : ''}"><small>${pos}</small><b class="g-${grade(o)}">${o}</b></span>`).join('')}
       </div>
-      <p class="muted small">Plays ${h(p.position || 'ATH')}${best !== (p.position || 'ATH') ? `, but his ratings fit <b>${best}</b> best` : ''}. Ratings move after every game: catches build CTH, drops cost it, picks build MCV, sacks build TAK, and beating the odds lifts everyone a little.</p>
+      <p class="muted small">Plays ${h(p.position || 'ATH')}${best !== (p.position || 'ATH') ? `, but his ratings fit <b>${best}</b> best` : ''}. Ratings move after every game from his own stats: catches build CTH, drops cost it, picks build MCV, sacks build TAK. Winning or losing doesn't count.</p>
     </section>`;
 }
 
@@ -2672,7 +2672,7 @@ function viewKey() {
           <div><b>${h(a.label)}</b><p>${h(ATTR_INFO[a.key][0])}</p><p class="key-moves">${h(ATTR_INFO[a.key][1])}</p></div>
         </div>`).join('')}
       </div>
-      <p class="muted small">Every rating also moves a little with the result: win a game you were expected to lose and they all tick up; get upset and they tick down. Gains get harder the closer you are to 99.</p>
+      <p class="muted small">Only his own stats move his ratings: whether his team won or lost doesn't count. Gains get harder the closer you are to 99.</p>
     </section>
     <section class="card">
       <h3>What the colors mean</h3>

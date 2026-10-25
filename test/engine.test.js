@@ -65,21 +65,26 @@ test('MVP tally: most votes wins, ties go to bigger impact', () => {
   assert.equal(t.winner, 'wa'); // receiver scored 2 TDs → more impact than 2 TD passes
 });
 
-test('computeLeague: winners gain, losers lose, upsets pay more', () => {
+test('computeLeague: ratings move with your own stats, not with winning or losing', () => {
   const players = ['qa', 'wa', 'xa', 'qb', 'wb', 'xb'].map((id) => ({ id, startOvr: 70 }));
-  const db = { players, games: [game({ events: [ev('rush_td', 'xa', null, 'A')] })] };
+  const db = { players, games: [game({ events: [ev('rush_td', 'xa', null, 'A'), ev('drop', 'wb', 'qb', 'B')] })] };
   const L = E.computeLeague(db);
-  for (const id of ['qa', 'wa']) assert.ok(L.elo[id] > 1000);
-  for (const id of ['qb', 'wb', 'xb']) assert.ok(L.elo[id] < 1000);
-  assert.ok(L.elo.xa > L.elo.qa, 'the TD scorer gets a performance bonus');
+  const c = L.games.g1.ratingChanges;
+  assert.ok(c.xa > c.qa, 'the TD scorer goes up more than a teammate who did nothing');
+  assert.ok(c.wb < c.qb, 'the drop costs wb');
+  assert.equal(c.qa, c.qb, 'no stats: same change on the winning and the losing team');
+  assert.equal(c.wa, c.xb);
   assert.equal(L.history.qa.length, 2);
 
-  // underdogs winning should move more than favourites winning
+  // the exact same stat line counts the same whether his team won, lost, or was the underdog
   const strong = ['qa', 'wa', 'xa'].map((id) => ({ id, startOvr: 90 }));
   const weak = ['qb', 'wb', 'xb'].map((id) => ({ id, startOvr: 60 }));
-  const fav = E.computeLeague({ players: [...strong, ...weak], games: [game({ events: [ev('rush_td', 'qa', null, 'A')] })] });
-  const upset = E.computeLeague({ players: [...strong, ...weak], games: [game({ events: [ev('rush_td', 'qb', null, 'B')] })] });
-  assert.ok(upset.games.g1.ratingChanges.wb > fav.games.g1.ratingChanges.wa);
+  const won = E.computeLeague({ players: [...strong, ...weak], games: [game({ events: [ev('catch', 'qb', 'wb', 'B'), ev('rush_td', 'qb', null, 'B')] })] });
+  const lost = E.computeLeague({ players: [...strong, ...weak], games: [game({ events: [ev('catch', 'qb', 'wb', 'B'), ev('rush_td', 'qa', null, 'A'), ev('rush_td', 'xa', null, 'A')] })] });
+  assert.equal(won.games.g1.summary.winner, 'B');
+  assert.equal(lost.games.g1.summary.winner, 'A');
+  assert.deepEqual(won.games.g1.attrChanges.wb, lost.games.g1.attrChanges.wb, 'underdog win or loss, same catch, same change');
+  assert.equal(won.ovr.wb, lost.ovr.wb);
 });
 
 test('computeLeague ignores unfinished games for ratings', () => {
@@ -180,27 +185,27 @@ test('Madden OVR: same player rates differently by position', () => {
 
 test('progression: catches build CTH, drops cost it, picks build coverage, gains slow near 99', () => {
   const s = (o) => ({ ...E.blankStats(), ...o });
-  const even = [0.5, 0.5];
-  assert.ok(E.progression(s({ rec: 5, targets: 5 }), ...even).cth > 0.35);
-  assert.ok(E.progression(s({ drops: 3, targets: 3 }), ...even).cth < -0.3);
-  assert.ok(E.progression(s({ defInt: 2 }), ...even).mcv > 0.35);
-  const qb = E.progression(s({ att: 10, comp: 3, intThrown: 3 }), ...even);
+  assert.ok(E.progression(s({ rec: 5, targets: 5 })).cth > 0.35);
+  assert.ok(E.progression(s({ drops: 3, targets: 3 })).cth < -0.3);
+  assert.ok(E.progression(s({ defInt: 2 })).mcv > 0.35);
+  const qb = E.progression(s({ att: 10, comp: 3, intThrown: 3 }));
   assert.ok(qb.tha < 0, 'picks and misses hurt accuracy');
-  const dropsNotOnQb = E.progression(s({ att: 5, comp: 2, dropped: 3 }), ...even);
+  const dropsNotOnQb = E.progression(s({ att: 5, comp: 2, dropped: 3 }));
   assert.ok(dropsNotOnQb.tha > 0, "receivers' drops don't count against the QB");
-  const rookie = E.progression(s({ rec: 5 }), ...even, { cth: 60 }).cth;
-  const vet = E.progression(s({ rec: 5 }), ...even, { cth: 97 }).cth;
+  const rookie = E.progression(s({ rec: 5 }), { cth: 60 }).cth;
+  const vet = E.progression(s({ rec: 5 }), { cth: 97 }).cth;
   assert.ok(vet < rookie / 3, 'harder to improve at the top');
-  assert.ok(E.progression(s({}), 1, 0.2).spd > E.progression(s({}), 1, 0.8).spd, 'upsets pay more');
+  const quiet = E.progression(s({}));
+  for (const k of E.ATTR_KEYS) if (k !== 'sta') assert.equal(quiet[k], 0, `no stats, no change to ${k}`);
 });
 
 test('ratings: attribute edits, legacy OVR edits, and games replay in order', () => {
   const players = ['qa', 'wa', 'xa', 'qb', 'wb', 'xb'].map((id) => ({ id, startOvr: 70, position: 'WR' }));
   players[1].ratingEdits = [{ at: '2026-08-01T00:00:00.000Z', attrs: { cth: 90, rte: 88, spd: 92 } }];
-  const g = game({ endedAt: '2026-09-10T00:00:00.000Z', events: [ev('pass_td', 'qa', 'wa', 'A'), ev('catch', 'qa', 'wa', 'A'), ev('drop', 'wb', 'qb', 'B')] });
+  const g = game({ endedAt: '2026-09-10T00:00:00.000Z', events: [ev('pass_td', 'qa', 'wa', 'A'), ev('catch', 'qa', 'wa', 'A'), ev('drop', 'wb', 'qb', 'B'), ev('drop', 'wb', 'qb', 'B')] });
   const L = E.computeLeague({ players, games: [g] });
   assert.ok(L.attrs.wa.cth >= 90 && L.attrs.wa.spd >= 92, 'kept the edit and progressed from it');
-  assert.ok(Math.abs(L.attrs.wa.thp - 70) <= 1, 'ratings he didn\'t use only move a little with the result');
+  assert.equal(L.attrs.wa.thp, 70, 'ratings his stats don\'t touch stay put');
   assert.ok(L.attrs.wb.cth < 70, 'the drop cost wb catching');
   assert.ok(L.games.g1.attrChanges.wb.cth < 0);
   assert.ok(L.ovr.wa > L.ovr.xa);
@@ -230,23 +235,22 @@ test('new ratings (ACC, RLS) follow SPD / RTE for players rated before they exis
 
 test('progression: catches build release, rushing TDs build acceleration', () => {
   const s = (o) => ({ ...E.blankStats(), ...o });
-  assert.ok(E.progression(s({ rec: 4, recTD: 1 }), 0.5, 0.5).rls > 0.15);
-  assert.ok(E.progression(s({ rushTD: 2 }), 0.5, 0.5).acc > 0.15);
+  assert.ok(E.progression(s({ rec: 4, recTD: 1 })).rls > 0.15);
+  assert.ok(E.progression(s({ rushTD: 2 })).acc > 0.15);
 });
 
 test('progression: one game nudges ratings, it takes a run of games to really move them', () => {
   const base = Object.fromEntries(E.ATTR_KEYS.map((k) => [k, 75]));
-  const ovrMove = (line, actual, expected, pos) => {
-    const d = E.progression({ ...E.blankStats(), ...line }, actual, expected, base);
+  const ovrMove = (line, pos) => {
+    const d = E.progression({ ...E.blankStats(), ...line }, base);
     return E.overallExact(Object.fromEntries(E.ATTR_KEYS.map((k) => [k, base[k] + d[k]])), pos) - E.overallExact(base, pos);
   };
-  // a monster game in an upset blowout: well under one OVR point
-  assert.ok(ovrMove({ rec: 8, targets: 8, recTD: 4 }, 1.25, 0.2, 'WR') < 1);
-  assert.ok(ovrMove({ att: 15, comp: 3, intThrown: 4 }, -0.25, 0.8, 'QB') > -1);
+  // a monster game: well under one OVR point
+  assert.ok(ovrMove({ rec: 8, targets: 8, recTD: 4 }, 'WR') < 1);
+  assert.ok(ovrMove({ att: 15, comp: 3, intThrown: 4 }, 'QB') > -1);
   // a quiet game barely registers
-  assert.ok(Math.abs(ovrMove({}, 1, 0.5, 'ATH')) < 0.25);
-  assert.ok(Math.abs(ovrMove({}, 0, 0.5, 'ATH')) < 0.25);
+  assert.ok(Math.abs(ovrMove({}, 'ATH')) < 0.25);
   // no single rating jumps more than about half a point in a game
-  const d = E.progression({ ...E.blankStats(), rec: 10, targets: 10, recTD: 5, rushTD: 3, defInt: 3, defTD: 2, sacks: 4 }, 1.25, 0.2, base);
+  const d = E.progression({ ...E.blankStats(), rec: 10, targets: 10, recTD: 5, rushTD: 3, defInt: 3, defTD: 2, sacks: 4 }, base);
   for (const k of E.ATTR_KEYS) assert.ok(d[k] <= 0.9, `${k} ${d[k]}`);
 });

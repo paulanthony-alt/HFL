@@ -242,14 +242,14 @@ export function tallyMvp(game, summary) {
 export const gameSortKey = (g) => `${g.date || ''}T${g.time || '00:00'}|${g.createdAt || ''}`;
 export const sortGames = (games) => [...games].sort((a, b) => (gameSortKey(a) < gameSortKey(b) ? -1 : 1));
 
-// Madden-style progression: how one game moves each rating. Gains get harder near
-// the top (diminishing returns), losses don't, and every rating nudges up or down a
-// little depending on whether your team beat the odds.
+// Madden-style progression: how one game moves each rating, from his own stat line only.
+// Winning or losing doesn't move anything. Gains get harder near the top (diminishing
+// returns), losses don't.
 // How fast ratings move. Each game nudges them; it takes a run of good (or bad) games to
-// really move a player. stat: how much a stat line counts; result: winning or losing vs the odds.
-export const PROGRESSION_RATE = { stat: 0.35, result: 0.35 };
+// really move a player.
+export const PROGRESSION_RATE = { stat: 0.35 };
 
-export function progression(s, actual, expected, current = {}) {
+export function progression(s, current = {}) {
   const incompletions = Math.max(0, s.att - s.comp - s.intThrown - s.dropped); // drops aren't on the QB
   const d = {
     cth: clamp(s.rec * 0.3 - s.drops * 1.0, -1.5, 1.5),
@@ -271,9 +271,8 @@ export function progression(s, actual, expected, current = {}) {
     car: clamp((s.rec + s.rushTD + s.defInt) * 0.1, 0, 0.8),
     rac: clamp(s.recTD * 0.5 + s.rec * 0.1, 0, 1), // catching it and taking it to the house
   };
-  const result = (actual - expected) * 1.2 * PROGRESSION_RATE.result;
   for (const k of ATTR_KEYS) {
-    let v = d[k] * PROGRESSION_RATE.stat + result;
+    let v = d[k] * PROGRESSION_RATE.stat;
     if (v > 0) v *= clamp((ATTR_MAX - (current[k] ?? 70)) / 30, 0.1, 1);
     d[k] = Math.round(v * 100) / 100;
   }
@@ -335,17 +334,11 @@ export function computeLeague(db) {
       const avgB = mean(B.map(rating));
       info.winProbA = winProbability(ovrToElo(avgA), ovrToElo(avgB));
       if (g.status === 'final') {
-        const actualA = summary.winner === 'A' ? 1 : summary.winner === 'B' ? 0 : 0.5;
-        const margin = Math.abs(summary.score.A - summary.score.B);
-        const mult = 1 + Math.min(margin, 28) / 56; // blowouts count up to 50% more
         const changes = {};
         const attrChanges = {};
         for (const id of [...A, ...B]) {
-          const onA = A.includes(id);
-          const actual = 0.5 + ((onA ? actualA : 1 - actualA) - 0.5) * mult;
-          const expected = onA ? info.winProbA : 1 - info.winProbA;
           const before = rating(id);
-          const d = progression(summary.stats[id] || blankStats(), actual, expected, attrs[id]);
+          const d = progression(summary.stats[id] || blankStats(), attrs[id]);
           for (const k of ATTR_KEYS) attrs[id][k] = clamp(attrs[id][k] + d[k], ATTR_MIN, ATTR_MAX);
           attrChanges[id] = d;
           changes[id] = Math.round((rating(id) - before) * 100) / 10; // Elo-scale: 10 = 1 OVR
