@@ -271,3 +271,30 @@ test('progression: one game nudges ratings, it takes a run of games to really mo
   const d = E.progression({ ...E.blankStats(), rec: 10, targets: 10, recTD: 5, rushTD: 3, defInt: 3, defTD: 2, sacks: 4 }, base);
   for (const k of E.ATTR_KEYS) assert.ok(d[k] <= 0.9, `${k} ${d[k]}`);
 });
+
+test('Bowl games: count 1.5x in the MVP race (Super Bowl 2x) and hand out awards', () => {
+  const players = ['qa', 'wa', 'xa', 'qb', 'wb', 'xb'].map((id) => ({ id, startOvr: 70 }));
+  const evs = [ev('pass_td', 'qa', 'wa', 'A'), ev('catch', 'qa', 'wa', 'A'), ev('int', 'xb', 'qa', 'B'), ev('sack', 'xa', 'qb', 'A'), ev('pass_td', 'qb', 'wb', 'B'), ev('rush_td', 'xa', null, 'A')];
+  const reg = game({ id: 'g1', events: evs, mvpVotes: { qa: 'wa', qb: 'wa' } });
+  const bowl = { ...reg, bowlName: 'Bowl I' };
+  const sb = { ...reg, bowlName: 'Super Bowl' };
+  const score = (g) => { const db = { players, games: [g] }; const L = E.computeLeague(db); return E.seasonTable(db, L, '2026'); };
+  const base = score(reg), b1 = score(bowl), b2 = score(sb);
+  for (const id of ['wa', 'xa', 'qb', 'xb']) {
+    const plain = E.mvpScore(base[id]);
+    assert.ok(Math.abs(E.mvpScore(b1[id]) - plain * 1.5) < 1e-9, `${id}: Bowl = 1.5x`);
+    assert.ok(Math.abs(E.mvpScore(b2[id]) - plain * 2) < 1e-9, `${id}: Super Bowl = 2x`);
+  }
+  assert.equal(E.gameWeight(reg), 1);
+  // awards
+  assert.equal(E.bowlAwards(reg, E.summarizeGame(reg)), null, 'regular games have no Bowl awards');
+  const sum = E.summarizeGame(bowl);
+  const a = E.bowlAwards(bowl, sum, E.tallyMvp(bowl, sum));
+  assert.equal(a.name, 'Bowl I');
+  assert.equal(a.mvp, 'wa', 'MVP = crowd vote');
+  assert.equal(a.offense, 'wa', 'TD catch + catch beats a TD run and a TD pass');
+  assert.equal(a.defense, 'xb', 'a pick (5) beats a sack (3)');
+  const noD = { ...bowl, events: [ev('pass_td', 'qa', 'wa', 'A')] };
+  assert.equal(E.bowlAwards(noD, E.summarizeGame(noD)).defense, null, 'no defensive stats: no Defensive Player of the Game');
+  assert.equal(E.bowlAwards({ ...bowl, status: 'live' }, sum), null, 'only after the final whistle');
+});

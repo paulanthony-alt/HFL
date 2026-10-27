@@ -23,7 +23,9 @@ at `#/fa` (Free agency) and `#/fa/p/<player>` (a player's free agency page).
 
 - A season is **9 games**. Every 4th game is a Bowl: **Bowl I** (game 4) and **Bowl II** (game 8).
   Game 9 is **the HFL Super Bowl**. The standings show who won each one. Only games made since
-  this was added count.
+  this was added count. Every Bowl hands out awards (MVP by crowd vote, Offensive and Defensive
+  Player of the Game, Clutch Player of the Game) and counts extra in the MVP race (Bowls 1.5×,
+  the Super Bowl 2×), same as the real app.
 - When the **Super Bowl** ends (not the Bowls), each **coach keeps up to 2 players** (a keeper costs
   his market value + 20%).
 - Both coaches lock in (or an admin opens it early) → a **7-day free agency frenzy**. Equal

@@ -55,6 +55,7 @@ test('bowl seasons: 9 games, Bowls at 4 and 8, the Super Bowl at 9, no 10th unti
   const gs = weeks(9).map((d) => call(db, 'POST', '/api/games', { date: d }));
   assert.deepEqual(gs.map((g) => g.week), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.deepEqual(gs.map((g) => (g.superBowl ? 'SB' : g.bowl ? 'B' : '-')).join(''), '---B---BSB');
+  assert.deepEqual(gs.map((g) => g.bowlName || '-'), ['-', '-', '-', 'Bowl I', '-', '-', '-', 'Bowl II', 'Super Bowl'], 'Bowl names for awards and MVP weight');
   refused(db, 'POST', '/api/games', { date: weeks(1, 9)[0] }, /already has its 9 games/);
   // move week 2 after the Super Bowl's date: weeks follow the calendar
   call(db, 'PATCH', `/api/games/${gs[1].id}`, { date: weeks(1, 12)[0] });

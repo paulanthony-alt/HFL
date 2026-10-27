@@ -10,7 +10,7 @@ import { nflComps } from './nfl.js';
 import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wrapped.js';
 import { CastView } from './cast.js';
 import { clockElapsed, formatClock, quarterLabel, isRunning } from './clock.js';
-import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
+import { typicalPlays, winProbSeries, biggestSwing, clutchTable, clutchPlays, formOf, teamScouting } from './insights.js';
 import { SEASON_GAMES, BOWL_EVERY, CAP, KEEPERS, MIN_DEAL, MAX_DEAL, FRENZY_DAYS, faState, keeperPrice, money, timeLeft, bowlName, bowlTitle } from './offseason.js';
 
 // ---------------------------------------------------------------------------
@@ -372,6 +372,53 @@ function ensureTeams() {
     .then((r) => { if (r?.changed) toast(`🏈 Season teams are set: ${r.teams.join(' vs ')}`); })
     .catch(() => {})
     .finally(() => { ensureTeams.running = false; });
+}
+
+// Bowl awards for a finished Bowl, plus the Clutch Player of the Game (biggest clutch plays).
+function gameBowlAwards(g) {
+  const info = gameInfo(g);
+  const a = E.bowlAwards(g, info.summary, info.mvp || E.tallyMvp(g, info.summary));
+  if (!a) return null;
+  const clutch = {};
+  for (const c of clutchPlays(g)) clutch[c.id] = (clutch[c.id] || 0) + c.pts;
+  const top = Object.entries(clutch).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1])[0];
+  return { ...a, clutch: top ? top[0] : null };
+}
+const BOWL_AWARDS = [
+  ['mvp', '🏆', 'MVP', 'Crowd vote'],
+  ['offense', '🏈', 'Offensive Player of the Game', 'Best offensive stat line'],
+  ['defense', '🛡️', 'Defensive Player of the Game', 'Picks, pick sixes and sacks'],
+  ['clutch', '🧊', 'Clutch Player of the Game', 'Biggest plays in a close game, late'],
+];
+function bowlAwardsCard(g) {
+  const a = gameBowlAwards(g);
+  if (!a) return '';
+  const stats = gameInfo(g).summary.stats;
+  return `
+    <section class="bowl-awards ${g.bowlName === 'Super Bowl' ? 'super' : ''}">
+      <div class="kicker gold">🏆 HFL ${h(g.bowlName)} awards</div>
+      ${BOWL_AWARDS.map(([k, icon, label, how]) => {
+        const id = a[k];
+        return `
+          <div class="ba-row">
+            <span class="ba-ic">${icon}</span>
+            <span class="grow"><small>${h(g.bowlName)} ${h(label)}</small>
+              ${id ? `<a href="#/p/${id}"><b>${h(nick(id))}</b></a><span class="muted small">${h(statLine(stats[id]))}</span>` : `<span class="muted small">${k === 'mvp' ? 'Voting is open below' : `Nobody yet (${h(how.toLowerCase())})`}</span>`}
+            </span>
+            ${id ? avatar(id) : ''}
+          </div>`;
+      }).join('')}
+    </section>`;
+}
+// Every Bowl award a player has won (player page badges).
+function bowlBadges(id) {
+  const out = [];
+  for (const g of S.db.games) {
+    if (!g.bowlName || g.status !== 'final') continue;
+    const a = gameBowlAwards(g);
+    for (const [k, icon, label] of BOWL_AWARDS) if (a?.[k] === id) out.push(`${icon} ${g.season} ${g.bowlName} ${k === 'mvp' ? 'MVP' : label.replace(' of the Game', '')}`);
+  }
+  return out;
 }
 
 // Season standings card (when the league has season teams).
@@ -1323,6 +1370,7 @@ function finalSection(g) {
   return `
     ${bowlName(g.week) ? bowlChampion(g) : ''}
     ${scoreboard(g)}
+    ${g.bowlName ? bowlAwardsCard(g) : ''}
     ${momentumChart(g)}
     ${recapCard(g)}
     ${mvpBlock(g)}
@@ -1351,7 +1399,7 @@ function mvpBlock(g) {
   return `
     <div class="mvp">
       <div class="mvp-head">
-        <div><div class="kicker gold">MVP of the day</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
+        <div><div class="kicker gold">${g.bowlName ? `${h(g.bowlName)} MVP` : 'MVP of the day'}</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
         ${tally.winner ? `<span class="crown">${avatar(tally.winner, 'lg')}</span>` : ''}
       </div>
       ${tally.ranked.length ? tally.ranked.slice(0, 5).map((r) => `
@@ -1742,7 +1790,7 @@ function viewStats() {
   if (tab === 'mvp') {
     list = rows.filter((r) => r.s.gp).sort((a, b) => E.mvpScore(b.s) - E.mvpScore(a.s));
     cols = [['Pts', (s) => Math.round(E.mvpScore(s))], ['👑', (s) => s.mvps], ['Rec', record], ['TD', E.totalTDs]];
-    note = 'MVP points: TD catch 7, TD run 6, pick six 11, INT 5, sack 3, catch 1, drop −2. QB stats count half because he’s on every play: TD pass 2, completion ¼, pick thrown −2. Plus 10 per crowd MVP and 2 per win.';
+    note = 'MVP points: TD catch 7, TD run 6, pick six 11, INT 5, sack 3, catch 1, drop −2. QB stats count half because he’s on every play: TD pass 2, completion ¼, pick thrown −2. Plus 10 per crowd MVP and 2 per win. Bowl games count 1.5×, the Super Bowl 2×.';
   } else if (tab === 'tds') {
     list = rows.filter((r) => E.totalTDs(r.s) || r.s.passTD).sort((a, b) => E.totalTDs(b.s) - E.totalTDs(a.s) || b.s.passTD - a.s.passTD);
     cols = [['TD', E.totalTDs], ['Rec', (s) => s.recTD], ['Rush', (s) => s.rushTD], ['Def', (s) => s.defTD], ['Pass', (s) => s.passTD]];
@@ -1842,6 +1890,7 @@ function badges(id) {
   if (coaching) out.push(`📋 ${coaching.name} Coach`);
   const deal = (S.db.settings.contracts || []).find((c) => c.playerId === id && c.season === S.db.settings.season);
   if (deal) out.push(`✍️ ${seasonTeams(S.db).find((t) => t.id === deal.teamId)?.name || 'Signed'} · ${money(deal.amount)}${deal.kind === 'keeper' ? ' (kept)' : ''}`);
+  out.push(...bowlBadges(id));
   if (c.mvps) out.push(`👑 ${c.mvps}× MVP`);
   if (S.db.fame.some((f) => f.category === 'best' && f.playerIds.includes(id))) out.push('🏛️ Hall of Famer');
   if (streak >= 3) out.push(`🏆 ${streak}-game win streak`);
@@ -2213,10 +2262,21 @@ function viewAwards() {
     <section class="card">
       <h3>Season awards</h3>
       <p class="muted small">${s?.done ? 'Final. These are locked in.' : 'Handed out when the season ends (change the season name in Settings to start a new one). Here\'s who\'s leading.'}</p>
-      ${award(s?.mvp, '👑', 'MVP', 'Most MVP points: stats, crowd MVPs and wins.')}
+      ${award(s?.mvp, '👑', 'MVP', 'Most MVP points: stats, crowd MVPs and wins. Bowls count 1.5×, the Super Bowl 2×.')}
       ${award(s?.improved, '📈', 'Most Improved', 'Biggest OVR gain from games this season (2+ games).')}
       ${award(s?.butter, '🧈', 'Butterfingers', 'Most drops. Nobody wants this one.')}
     </section>
+    ${(() => {
+      const bowls = S.db.games.filter((g) => g.bowlName && g.status === 'final' && String(g.season) === String(season))
+        .sort((x, y) => E.BOWLS.indexOf(x.bowlName) - E.BOWLS.indexOf(y.bowlName));
+      const upcoming = S.db.games.filter((g) => g.bowlName && g.status !== 'final' && String(g.season) === String(season));
+      if (!bowls.length && !upcoming.length) return '';
+      return `<section class="card">
+        <h3>Bowl awards</h3>
+        <p class="muted small">Every Bowl hands out its own MVP (crowd vote), Offensive and Defensive Player of the Game, and Clutch Player of the Game. ${upcoming.map((g) => `${h(g.bowlName)}: ${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}.`).join(' ')}</p>
+        ${bowls.map((g) => bowlAwardsCard(g)).join('')}
+      </section>`;
+    })()}
     <section class="card">
       <h3>Player of the Week</h3>
       <p class="muted small">Biggest stat impact across each week's games (weeks start Monday).</p>

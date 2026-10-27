@@ -24,6 +24,7 @@ function renumberWeeks(db, season) {
     const name = bowlName(g.week);
     if (name && g.week < SEASON_GAMES) g.bowl = true; else delete g.bowl;
     if (g.week === SEASON_GAMES) g.superBowl = true; else delete g.superBowl;
+    if (name) g.bowlName = name; else delete g.bowlName; // Bowl awards and MVP weight (engine.js)
   });
 }
 // One-time: put guys into the game that's on right now (live, or today's if it hasn't kicked

@@ -1499,3 +1499,13 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .bowl-cell small { font: 700 10.5px/1 var(--label); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 .bowl-cell b { font: 900 italic 17px/1 var(--display); font-synthesis: style; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bowl-cell em { font: 600 13px/1 var(--label); font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+
+/* bowl awards (same as the real app) */
+.bowl-awards { margin: 14px 0; padding: 14px 16px 6px; border-radius: var(--r); background: var(--bg-1); border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); }
+.bowl-awards.super { border-width: 2px; }
+.ba-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.ba-row:last-child { border-bottom: 0; }
+.ba-ic { font-size: 24px; width: 30px; text-align: center; }
+.ba-row .grow { display: grid; gap: 2px; min-width: 0; }
+.ba-row small { font: 700 11px/1.2 var(--label); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.ba-row a b { font: 900 italic 22px/1 var(--display); font-synthesis: style; text-transform: uppercase; color: var(--text); }
