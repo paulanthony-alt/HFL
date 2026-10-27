@@ -381,7 +381,7 @@ function standingsCard(season = S.db.settings.season, { compact = false } = {}) 
     <section class="card standings">
       <div class="row-between"><h3>Standings</h3><span class="muted small">Season ${h(season)}</span></div>
       <table class="st-table"><thead><tr><th class="l">Team</th><th>W</th><th>L</th>${compact ? '' : '<th>T</th><th>PF</th><th>PA</th>'}<th>Diff</th></tr></thead><tbody>
-        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { if (compact) return ''; const c = seasonCaptain(S.db, t(r.id), S.league); const co = seasonCoach(S.db, t(r.id)); const parts = [co && `Coach ${h(firstName(co))}`, c && `Captain ${h(nick(c))}`].filter(Boolean); return parts.length ? `<div class="muted small st-cap">${parts.join(' · ')}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
+        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { if (compact) return ''; const c = seasonCaptain(S.db, t(r.id), S.league); const co = seasonCoach(S.db, t(r.id)); const parts = co && co === c ? [`Coach & captain ${h(firstName(co))}`] : [co && `Coach ${h(firstName(co))}`, c && `Captain ${h(nick(c))}`].filter(Boolean); return parts.length ? `<div class="muted small st-cap">${parts.join(' · ')}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
       </tbody></table>
       ${rows.every((r) => !r.gp) ? '<p class="muted small">No games finished yet this season.</p>' : ''}
     </section>`;
@@ -470,7 +470,7 @@ function matchupHero(g) {
       <div class="mu-side mu-${k}">
         <span class="mu-rec">${r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '&nbsp;'}</span>
         <b class="mu-name" style="--len:${Math.max(6, teamName(g, 'A').length, teamName(g, 'B').length)}">${h(teamName(g, k))}</b>
-        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${coach ? `<span>Coach <b>${h(firstName(coach))}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}</span>
+        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${coach && coach === cap ? `<span>Coach & capt. <b>${h(firstName(coach))}</b></span>` : `${coach ? `<span>Coach <b>${h(firstName(coach))}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}`}</span>
       </div>`;
   };
   const days = Math.round((Date.parse(`${g.date}T00:00`) - Date.parse(`${localToday()}T00:00`)) / 864e5);
