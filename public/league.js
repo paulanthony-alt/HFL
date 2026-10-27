@@ -535,8 +535,10 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   // Mark a game as a Bowl (or clear it). Each Bowl name only goes on one game a season.
   const setBowl = (db, g, name) => {
     if (name && !BOWLS.includes(name)) throw bad('pick Bowl I, Bowl II or the Super Bowl');
-    for (const x of db.games) if (x !== g && name && x.bowlName === name && String(x.season) === String(g.season)) delete x.bowlName;
-    if (name) g.bowlName = name; else delete g.bowlName;
+    for (const x of db.games) {
+      if (x !== g && name && x.bowlName === name && String(x.season) === String(g.season)) { delete x.bowlName; delete x.bowlLabel; }
+    }
+    if (name) g.bowlName = name; else { delete g.bowlName; delete g.bowlLabel; }
     delete db.settings.nextBowl;
   };
   on('POST', '/api/setup-bowls', (db) => {
@@ -589,6 +591,13 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if ('bowlName' in b && (b.bowlName || null) !== (g.bowlName || null)) {
       requireCommish(db, b, 'change which games are Bowls');
       setBowl(db, g, b.bowlName || null);
+    }
+    // A Bowl's own name ("Turkey Bowl"); blank goes back to the default (HFL Bowl I...).
+    if ('bowlLabel' in b && (b.bowlLabel || '') !== (g.bowlLabel || '')) {
+      requireCommish(db, b, 'name the Bowl games');
+      const label = str(b.bowlLabel, 30, { name: 'Bowl name' });
+      if (label && !g.bowlName) throw bad('make it a Bowl game first, then name it');
+      if (label) g.bowlLabel = label; else delete g.bowlLabel;
     }
     if (b.teamNames) {
       if ('A' in b.teamNames) g.teamNames.A = str(b.teamNames.A, 24, { required: true, name: 'team name' });

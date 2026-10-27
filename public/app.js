@@ -390,7 +390,9 @@ function ensureBowls() {
 // ---------------------------------------------------------------------------
 // Bowl games: Bowl I, Bowl II and the Super Bowl (game.bowlName, set by admins)
 
-const bowlTitle = (g) => (g?.bowlName ? `HFL ${g.bowlName}` : '');
+// A Bowl's name: its own (admins can name it, e.g. "Turkey Bowl") or the default.
+const bowlTitle = (g) => (g?.bowlName ? g.bowlLabel || `HFL ${g.bowlName}` : ''); // "HFL Bowl I" (banners)
+const bowlShort = (g) => (g?.bowlName ? g.bowlLabel || g.bowlName : ''); // "Bowl I" (awards, badges)
 // Bowl awards for a finished Bowl, plus the Clutch Player of the Game (biggest clutch plays).
 function gameBowlAwards(g) {
   const info = gameInfo(g);
@@ -419,7 +421,7 @@ function bowlAwardsCard(g) {
         return `
           <div class="ba-row">
             <span class="ba-ic">${icon}</span>
-            <span class="grow"><small>${h(g.bowlName)} ${h(label)}</small>
+            <span class="grow"><small>${h(bowlShort(g))} ${h(label)}</small>
               ${id ? `<a href="#/p/${id}"><b>${h(nick(id))}</b></a><span class="muted small">${h(statLine(stats[id]))}</span>` : `<span class="muted small">${k === 'mvp' ? 'Voting is open below' : `Nobody yet (${h(how.toLowerCase())})`}</span>`}
             </span>
             ${id ? avatar(id) : ''}
@@ -434,7 +436,7 @@ function bowlChampion(g) {
     <${sb ? 'a href="#/fa"' : 'div'} class="bowl-champ ${sb ? 'super' : ''}">
       <span class="bowl-trophy">🏆</span>
       <span class="grow"><span class="kicker gold">${h(bowlTitle(g))} · Season ${h(g.season)}</span>
-        <b>${w === 'tie' ? `${h(g.bowlName)} ends in a tie` : sb ? `${h(teamName(g, w))} are HFL champions` : `${h(teamName(g, w))} win ${h(g.bowlName).replace(' ', '&nbsp;')}`}</b>
+        <b>${w === 'tie' ? `${h(bowlShort(g))} ends in a tie` : sb ? `${h(teamName(g, w))} are HFL champions` : `${h(teamName(g, w))} win ${g.bowlLabel ? `the ${h(bowlShort(g))}` : h(bowlShort(g)).replace(' ', '&nbsp;')}`}</b>
         <small>${sb ? `Offseason: coaches keep ${KEEPERS}, then a week of free agency ›` : 'Counts 1.5× in the MVP race'}</small></span>
     </${sb ? 'a' : 'div'}>`;
 }
@@ -446,7 +448,7 @@ function bowlTrophies(season) {
     const g = games.find((x) => x.bowlName === name);
     const win = g?.status === 'final' ? gameInfo(g).summary.winner : null;
     const side = win && win !== 'tie' ? win : null;
-    return `<${g ? `a href="#/g/${g.id}"` : 'span'} class="bowl-cell ${name === 'Super Bowl' ? 'super' : ''}"><small>🏆 ${h(name)}</small>${side ? `<b style="color:${h(sideColor(g, side))}">${h(teamName(g, side))}</b>` : `<em>${win === 'tie' ? 'Tie' : g ? h(fmtDate(g.date, { month: 'short', day: 'numeric' })) : 'TBD'}</em>`}</${g ? 'a' : 'span'}>`;
+    return `<${g ? `a href="#/g/${g.id}"` : 'span'} class="bowl-cell ${name === 'Super Bowl' ? 'super' : ''}"><small>🏆 ${h(g ? bowlShort(g) : name)}</small>${side ? `<b style="color:${h(sideColor(g, side))}">${h(teamName(g, side))}</b>` : `<em>${win === 'tie' ? 'Tie' : g ? h(fmtDate(g.date, { month: 'short', day: 'numeric' })) : 'TBD'}</em>`}</${g ? 'a' : 'span'}>`;
   }).join('')}</div>`;
 }
 // Every Bowl award a player has won (player page badges).
@@ -455,7 +457,7 @@ function bowlBadges(id) {
   for (const g of S.db.games) {
     if (!g.bowlName || g.status !== 'final') continue;
     const a = gameBowlAwards(g);
-    for (const [k, icon, label] of BOWL_AWARDS) if (a?.[k] === id) out.push(`${icon} ${g.season} ${g.bowlName} ${k === 'mvp' ? 'MVP' : label.replace(' of the Game', '')}`);
+    for (const [k, icon, label] of BOWL_AWARDS) if (a?.[k] === id) out.push(`${icon} ${g.season} ${bowlShort(g)} ${k === 'mvp' ? 'MVP' : label.replace(' of the Game', '')}`);
   }
   return out;
 }
@@ -1438,7 +1440,7 @@ function mvpBlock(g) {
   return `
     <div class="mvp">
       <div class="mvp-head">
-        <div><div class="kicker gold">${g.bowlName ? `${h(g.bowlName)} MVP` : 'MVP of the day'}</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
+        <div><div class="kicker gold">${g.bowlName ? `${h(bowlShort(g))} MVP` : 'MVP of the day'}</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
         ${tally.winner ? `<span class="crown">${avatar(tally.winner, 'lg')}</span>` : ''}
       </div>
       ${tally.ranked.length ? tally.ranked.slice(0, 5).map((r) => `
@@ -1473,7 +1475,11 @@ function gameAdmin(g) {
             <option value="">Regular game</option>
             ${E.BOWLS.map((b) => `<option ${g.bowlName === b ? 'selected' : ''}>${b}</option>`).join('')}
           </select>
-        </label>` : g.bowlName ? `<p class="muted small">🏆 ${h(bowlTitle(g))}. League admins pick the Bowl games.</p>` : ''}
+        </label>
+        <label>Bowl name <span class="muted small">(optional)</span>
+          <input name="bowlLabel" maxlength="30" value="${h(g.bowlLabel || '')}" placeholder="${h(g.bowlName ? `HFL ${g.bowlName}` : 'e.g. Turkey Bowl')}">
+        </label>
+        <p class="muted small">Leave the name blank for the default (HFL Bowl I, HFL Bowl II, HFL Super Bowl).</p>` : g.bowlName ? `<p class="muted small">🏆 ${h(bowlTitle(g))}. League admins pick the Bowl games.</p>` : ''}
         <button class="btn">Save changes</button>
       </form>
       ${g.status === 'final' ? `<button class="btn ghost block" data-a="reopen" data-g="${g.id}">↩ Reopen game to fix stats</button>` : ''}
@@ -1684,7 +1690,7 @@ function faWire(st) {
   if (!items.length) return '';
   const tn = (id) => teamChip(faTeamById(id));
   const line = (f) => {
-    if (f.kind === 'bowl') { const g = S.db.games.find((x) => x.id === f.gameId); const w = g && gameInfo(g).summary.winner; return g ? `🏆 <b>${w === 'tie' ? 'The Super Bowl ends in a tie' : `${h(teamName(g, w))} win the HFL Super Bowl`}</b>, ${gameInfo(g).summary.score.A}–${gameInfo(g).summary.score.B}. The offseason is on.` : '🏆 The Super Bowl is over.'; }
+    if (f.kind === 'bowl') { const g = S.db.games.find((x) => x.id === f.gameId); const w = g && gameInfo(g).summary.winner; return g ? `🏆 <b>${w === 'tie' ? `The ${h(bowlTitle(g))} ends in a tie` : `${h(teamName(g, w))} win the ${h(bowlTitle(g))}`}</b>, ${gameInfo(g).summary.score.A}–${gameInfo(g).summary.score.B}. The offseason is on.` : '🏆 The Super Bowl is over.'; }
     if (f.kind === 'keepers') return `🔒 ${tn(f.teamId)} keep ${f.ids.length ? f.ids.map((x) => `<b>${h(nick(x))}</b>`).join(' and ') : 'nobody'}.`;
     if (f.kind === 'open') return `🚨 <b>Free agency is open.</b> ${FRENZY_DAYS} days. Coaches, go.`;
     if (f.kind === 'offer') return `👀 ${tn(f.teamId)} made an offer to <b>${h(nick(f.playerId))}</b>.`;
@@ -2285,7 +2291,7 @@ function viewAwards() {
       if (!bowls.length && !upcoming.length) return '';
       return `<section class="card">
         <h3>Bowl awards</h3>
-        <p class="muted small">Every Bowl hands out its own MVP (crowd vote), Offensive and Defensive Player of the Game, and Clutch Player of the Game. ${upcoming.map((g) => `${h(g.bowlName)}: ${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}.`).join(' ')}</p>
+        <p class="muted small">Every Bowl hands out its own MVP (crowd vote), Offensive and Defensive Player of the Game, and Clutch Player of the Game. ${upcoming.map((g) => `${h(bowlShort(g))}: ${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}.`).join(' ')}</p>
         ${bowls.map((g) => bowlAwardsCard(g)).join('')}
       </section>`;
     })()}
@@ -3589,7 +3595,7 @@ const FORMS = {
   },
   'game-edit': (d, form) => run(() => api('PATCH', `/api/games/${form.dataset.g}`, {
     date: d.date, time: d.time, location: d.location, season: d.season, teamNames: { A: d.teamA, B: d.teamB },
-    ...('bowlName' in d ? { bowlName: d.bowlName || null } : {}),
+    ...('bowlName' in d ? { bowlName: d.bowlName || null, bowlLabel: d.bowlName ? (d.bowlLabel || '').trim() : '' } : {}),
   }), 'Game updated'),
   post: async (d, form) => {
     if (!needMe()) return;

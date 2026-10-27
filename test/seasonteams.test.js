@@ -140,3 +140,26 @@ test('Bowls: the next scheduled game becomes Bowl I once; admins mark Bowls; one
   assert.equal(call(db2, 'POST', '/api/games', { date: '2099-11-01' }).bowlName, 'Bowl I');
   assert.equal(call(db2, 'POST', '/api/games', { date: '2099-11-08' }).bowlName, undefined, 'just that one');
 });
+
+test('Bowl names: admins can give a Bowl its own name; blank or no longer a Bowl goes back to default', () => {
+  const db = setup();
+  call(db, 'POST', '/api/setup-teams');
+  const admin = { as: 'paul', pinHash: H('a') };
+  const g = call(db, 'POST', '/api/games', { date: '2099-11-26' });
+  const other = call(db, 'POST', '/api/games', { date: '2099-12-03' });
+  assert.throws(() => call(structuredClone(db), 'PATCH', `/api/games/${g.id}`, { bowlLabel: 'Turkey Bowl', _auth: admin }), /make it a Bowl game first/);
+  call(db, 'PATCH', `/api/games/${g.id}`, { bowlName: 'Bowl I', bowlLabel: 'Turkey Bowl', _auth: admin });
+  assert.deepEqual([g.bowlName, g.bowlLabel], ['Bowl I', 'Turkey Bowl']);
+  assert.throws(() => call(structuredClone(db), 'PATCH', `/api/games/${g.id}`, { bowlLabel: 'Gravy Bowl', _auth: { as: 'ben', pinHash: H('b') } }), /locked/, 'admins only');
+  assert.throws(() => call(structuredClone(db), 'PATCH', `/api/games/${g.id}`, { bowlLabel: 'x'.repeat(31), _auth: admin }), /Bowl name/);
+  call(db, 'PATCH', `/api/games/${g.id}`, { bowlLabel: '', _auth: admin });
+  assert.equal(g.bowlLabel, undefined, 'blank = default name');
+  call(db, 'PATCH', `/api/games/${g.id}`, { bowlLabel: 'Turkey Bowl', _auth: admin });
+  // Bowl I moves to another game: the old game is a regular game again, without the name
+  call(db, 'PATCH', `/api/games/${other.id}`, { bowlName: 'Bowl I', _auth: admin });
+  assert.equal(g.bowlName, undefined);
+  assert.equal(g.bowlLabel, undefined, 'a regular game has no Bowl name');
+  call(db, 'PATCH', `/api/games/${other.id}`, { bowlName: 'Super Bowl', bowlLabel: 'The Big One', _auth: admin });
+  call(db, 'PATCH', `/api/games/${other.id}`, { bowlName: null, bowlLabel: '', _auth: admin });
+  assert.deepEqual([other.bowlName, other.bowlLabel], [undefined, undefined]);
+});
