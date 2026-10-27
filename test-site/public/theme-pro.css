@@ -503,3 +503,6 @@ input[type=range]::-webkit-slider-thumb { border-radius: 3px; transform: skewX(-
 .pc-legend .p-mid { text-align: center; }
 .pc-legend .p-elite { text-align: right; }
 @media (max-width: 380px) { .team-name { font-size: 20px; } }
+
+/* test site: the TEST badge needs room next to "who are you" */
+@media (max-width: 430px) { .me-pill { max-width: 112px; } }

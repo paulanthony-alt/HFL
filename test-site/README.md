@@ -15,3 +15,19 @@ A full copy of the HFL app for trying things out. Change anything in this folder
 
 Preview channels expire after 30 days without a deploy; pushing again (or running the workflow)
 brings it back. To move something you like into the real app, copy the change into `public/`.
+
+## Trying out: Bowl games and free agency (not in the real app yet)
+
+Rules live in `public/offseason.js`; routes in `public/league.js` (`/api/offseason/...`); screens
+at `#/fa` (Free agency) and `#/fa/p/<player>` (a player's free agency page).
+
+- A season is **4 games**; game 4 is **the HFL Bowl**. Only games made since this was added count.
+- When the Bowl ends, each **coach keeps up to 2 players** (a keeper costs his market value + 20%).
+- Both coaches lock in (or an admin opens it early) → a **7-day free agency frenzy**. Equal
+  **$100M cap** per team, roster max = half the crew. Coaches tap a free agent and offer a
+  1-season contract ($1M–$40M); players tap **Sign contract** on the offer they want.
+- When the week is up (or an admin closes it), the next season starts (`2026` → `2026 S2`) with
+  coach + keepers + signings on each team. Unsigned players stay free agents.
+
+To try it here: an admin sets both coaches in Settings, schedules 4 games for today, starts each,
+logs a play and blows the final whistle. The 4th is the Bowl, and the offseason starts.

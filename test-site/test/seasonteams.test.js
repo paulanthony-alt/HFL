@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as E from '../public/engine.js';
-import { buildRoutes, matchRoute, emptyDb, seasonCaptain, HFL_TEAMS } from '../public/league.js';
+import { buildRoutes, matchRoute, emptyDb, seasonCaptain, seasonCoach, coachOf, HFL_TEAMS } from '../public/league.js';
 import { makeLock, encryptJSON } from '../public/teamlock.js';
 
 const routes = buildRoutes();
@@ -75,4 +75,34 @@ test('season teams: captains, standings and season-long private playbooks', asyn
   assert.equal(play.gameId, undefined);
   assert.throws(() => call(db, 'POST', '/api/plays', { teamId: 'giffinland', enc: box, _team: secrets.proof }), /team PIN/);
   assert.throws(() => call(db, 'DELETE', `/api/plays/${play.id}`, { _auth: { as: 'lucas', pinHash: H('a') } }), /team PIN/, 'the other captain can’t delete it');
+});
+
+test('coaches: admins set them, a coach plays for his team, one coach per team', () => {
+  const db = setup();
+  call(db, 'POST', '/api/setup-teams');
+  const admin = { as: 'paul', pinHash: H('a') };
+  const teams = () => db.settings.teams.map((x) => ({ ...x }));
+  // Evan is a free agent: making him Giffinland's coach puts him on Giffinland
+  const t1 = teams(); t1[0].coachId = 'evan';
+  // (rejected changes run on a copy: the real app throws the whole change away)
+  assert.throws(() => call(structuredClone(db), 'PUT', '/api/season-teams', { teams: t1, _auth: { as: 'ben', pinHash: H('b') } }), /locked/, 'admins only');
+  call(db, 'PUT', '/api/season-teams', { teams: t1, _auth: admin });
+  assert.equal(seasonCoach(db, db.settings.teams[0]), 'evan');
+  assert.ok(db.settings.teams[0].players.includes('evan'));
+  assert.equal(coachOf(db, 'evan').name, 'Giffinland');
+  // Max (Sostreville) as Giffinland's coach moves him over
+  const t2 = teams(); t2[0].coachId = 'max';
+  call(db, 'PUT', '/api/season-teams', { teams: t2, _auth: admin });
+  assert.ok(db.settings.teams[0].players.includes('max') && !db.settings.teams[1].players.includes('max'));
+  // same coach for both teams: no
+  const t3 = teams(); t3[1].coachId = 'max';
+  assert.throws(() => call(structuredClone(db), 'PUT', '/api/season-teams', { teams: t3, _auth: admin }), /one coach per team/);
+  // saving without a coachId keeps the coach; an empty one clears it
+  const t4 = teams().map(({ coachId, ...x }) => x);
+  call(db, 'PUT', '/api/season-teams', { teams: t4, _auth: admin });
+  assert.equal(db.settings.teams[0].coachId, 'max');
+  const t5 = teams(); t5[0].coachId = null;
+  call(db, 'PUT', '/api/season-teams', { teams: t5, _auth: admin });
+  assert.equal(seasonCoach(db, db.settings.teams[0]), null);
+  assert.throws(() => call(structuredClone(db), 'PUT', '/api/season-teams', { teams: [{ ...teams()[0], coachId: 'nobody' }, teams()[1]], _auth: admin }), /coach/);
 });

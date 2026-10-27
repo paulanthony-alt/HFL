@@ -1404,5 +1404,88 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .st-row select { width: 150px; flex: none; }
 .st-cap { margin: 3px 0 0 18px; }
 
+/* late arrivals during a live game */
+.late-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.late-row:first-of-type { border-top: 0; }
+.late-row b { font-size: 15px; min-width: 8ch; }
+
+/* season team coach */
+.st-coach { font: 700 12px/1 var(--label); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+
 /* test copy marker */
 .test-badge { margin-left: 8px; padding: 4px 8px; border-radius: 6px; background: #ffc53d; color: #0b0b0b; font: 800 11px/1 var(--label); letter-spacing: 0.14em; }
+
+/* ---------- bowl games & free agency (test site preview) ---------- */
+.kicker.gold { color: var(--gold); }
+.fa-week { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--r); background: var(--bg-1); border: 1px solid var(--line-2); font: 700 13.5px/1.3 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+.fa-week.bowl { border-color: color-mix(in srgb, var(--gold) 55%, transparent); background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 16%, transparent), transparent); color: var(--text); }
+.mu-bowl { grid-column: 1 / -1; padding: 7px 18px; background: linear-gradient(90deg, #8a6a00, var(--gold), #8a6a00); color: #0b0b0b; font: 900 italic 16px/1 var(--display); font-synthesis: style; letter-spacing: 0.14em; text-transform: uppercase; text-align: center; }
+.bowl-champ { display: flex; align-items: center; gap: 14px; margin: 14px 0 6px; padding: 14px 16px; border-radius: var(--r); color: var(--text);
+  background: linear-gradient(110deg, color-mix(in srgb, var(--gold) 28%, var(--surface)), var(--surface) 70%); border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent); }
+.bowl-champ b { display: block; margin: 4px 0 3px; font: 900 italic 26px/1 var(--display); font-synthesis: style; text-transform: uppercase; }
+.bowl-champ small { display: block; font: 700 12.5px/1.2 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); }
+.bowl-trophy { font-size: 40px; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5)); }
+.fa-banner { border-left-color: var(--gold); }
+.fa-champ { padding: 6px 10px; border-radius: 3px; background: color-mix(in srgb, var(--gold) 20%, transparent); border: 1px solid color-mix(in srgb, var(--gold) 50%, transparent); font: 800 14px/1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; }
+.fa-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 0 16px; padding: 0; list-style: none; }
+.fa-steps li { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 2px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--line); font: 700 11px/1.1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.fa-steps li span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-3); color: var(--text-2); font-size: 12px; }
+.fa-steps li.done { color: var(--text-2); }
+.fa-steps li.done span { background: var(--turf); color: #03200f; }
+.fa-steps li.on { color: var(--text); border-color: var(--gold); background: color-mix(in srgb, var(--gold) 12%, var(--bg-1)); }
+.fa-steps li.on span { background: var(--gold); color: #0b0b0b; }
+.fa-team { display: inline-block; padding: 4px 8px 4px 9px; border-left: 3px solid var(--tc); background: color-mix(in srgb, var(--tc) 18%, transparent); color: var(--text); font: 800 13px/1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.fa-clock { text-align: center; border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.fa-left { display: flex; align-items: baseline; justify-content: center; gap: 10px; margin: 8px 0 6px; }
+.fa-left b { font: 900 italic 58px/0.9 var(--display); font-synthesis: style; color: #fff; }
+.fa-left span { font: 700 16px/1 var(--label); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.fa-mine { border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
+.fa-mine.signed { font-size: 15.5px; }
+.fa-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.fa-offer:first-of-type { border-top: 0; }
+.fa-offer .grow { display: grid; gap: 2px; min-width: 8ch; }
+.fa-amt { font: 900 26px/1 var(--display); color: var(--gold); }
+.fa-cap .fa-capteam { padding: 12px 0; border-top: 1px solid var(--line); }
+.fa-cap .fa-capteam:first-of-type { border-top: 0; padding-top: 4px; }
+.fa-tname { font: 900 italic 22px/1 var(--display); font-synthesis: style; text-transform: uppercase; color: var(--tc); }
+.fa-capbar { height: 8px; margin: 10px 0 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.fa-capbar i { display: block; height: 100%; background: linear-gradient(90deg, color-mix(in srgb, var(--tc) 60%, #000), var(--tc)); }
+.fa-capline { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 10px; font: 600 12.5px/1 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.fa-capline b { color: var(--text); font-size: 15px; }
+.fa-role { margin-left: 2px; padding: 2px 5px; border-radius: 2px; background: var(--surface-3); font: 800 10px/1 var(--label); font-style: normal; letter-spacing: 0.06em; color: var(--text-2); }
+.fa-role.k { background: color-mix(in srgb, var(--gold) 30%, transparent); color: var(--text); }
+.fa-role.s { background: color-mix(in srgb, var(--turf) 25%, transparent); color: var(--text); }
+.fa-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.fa-keep { padding: 10px 0 4px; border-top: 1px solid var(--line); }
+.fa-keep:first-of-type { border-top: 0; }
+.fa-keeprow { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14.5px; }
+.fa-keeprow:has(input:checked) { background: color-mix(in srgb, var(--gold) 10%, transparent); }
+.fa-keeprow:has(input:disabled) { opacity: 0.5; cursor: default; }
+.fa-keeprow b.g-elite, .fa-keeprow b.g-great, .fa-keeprow b.g-good, .fa-keeprow b.g-meh, .fa-keeprow b.g-rough { font: 900 19px/1 var(--display); }
+.fa-money { min-width: 54px; text-align: right; font: 800 14px/1 var(--label); letter-spacing: 0.04em; color: var(--text-2); }
+.fa-money.mine { color: var(--gold); }
+.fa-keepstatus { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; }
+.fa-board { display: grid; gap: 6px; margin-bottom: 14px; }
+.fa-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--line-2); color: var(--text); }
+.fa-row:hover { border-left-color: var(--gold); }
+.fa-row .grow { display: grid; gap: 2px; min-width: 0; }
+.fa-row .grow b { font-size: 15.5px; }
+.fa-interest { font: 700 12px/1 var(--label); letter-spacing: 0.06em; text-transform: uppercase; color: var(--red); white-space: nowrap; }
+.fa-ovr { width: 34px; text-align: right; font: 900 22px/1 var(--display); }
+.fa-wire ul { margin: 0; padding: 0; list-style: none; }
+.fa-wire li { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; line-height: 1.4; }
+.fa-wire li:last-child { border-bottom: 0; }
+.fa-wire time { flex: none; white-space: nowrap; }
+.fa-wire .fa-team { padding: 2px 6px 2px 7px; font-size: 11.5px; }
+.fa-rules { margin: 0 0 8px; padding-left: 20px; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+.fa-rules li { margin-bottom: 6px; }
+.fa-phead { display: flex; align-items: center; gap: 14px; }
+.fa-phead h2 { margin: 0 0 2px; }
+.fa-status { margin-top: 6px; font: 700 13px/1.2 var(--label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); }
+.fa-big { display: grid; justify-items: end; }
+.fa-big b { font: 900 italic 46px/0.9 var(--display); font-synthesis: style; }
+.fa-big small { font: 700 11px/1 var(--label); letter-spacing: 0.16em; color: var(--muted); }
+.fa-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 14px 0 10px; padding: 10px 12px; border-radius: var(--r); background: var(--bg-1); border: 1px solid var(--line-2); font: 700 12.5px/1 var(--label); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.fa-value b { font: 900 24px/1 var(--display); color: var(--gold); letter-spacing: 0; }
+.fa-make { border-left: 4px solid var(--tc); }
+@media (max-width: 380px) { .fa-left b { font-size: 46px; } .fa-steps li { font-size: 9.5px; } }

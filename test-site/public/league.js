@@ -5,16 +5,33 @@ import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
 import { applyClock, CLOCK_ACTIONS } from './clock.js';
 import { sha256hex } from './sha256.js';
+import { SEASON_GAMES, KEEPERS, faState, dealProblem, keeperPrice, frenzyEnd, nextSeasonName, weekGames, roundHalf } from './offseason.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
 // The HFL crew. The first time the app opens a league without this roster
 // (settings.rosterVersion), it clears out everyone else and adds these guys.
-export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah'];
+export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'Matteo', 'Ben', 'Lucas', 'Paul', 'Dane', 'Teddy', 'Bobby', 'Noah', 'Will Walsh'];
 // Version 1 set up the original crew (and cleared everyone else). Later versions only add
 // the new guys listed here: nobody is ever removed again.
-export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'] };
-export const ROSTER_VERSION = 2;
+export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'], 3: ['Will Walsh'] };
+// Bowl seasons: number a season's games by date (week 1..), the last one is the Bowl.
+function renumberWeeks(db, season) {
+  const list = weekGames(db, season).sort((a, b) => `${a.date}T${a.time || '00:00'}|${a.createdAt || ''}` < `${b.date}T${b.time || '00:00'}|${b.createdAt || ''}` ? -1 : 1);
+  list.forEach((g, i) => {
+    g.week = i + 1;
+    if (g.week === SEASON_GAMES) g.bowl = true; else delete g.bowl;
+  });
+}
+// One-time: put guys into the game that's on right now (live, or today's if it hasn't kicked
+// off or just ended), for that game only. Found by name (a first name like "Logan" matches
+// "Logan" or "Logan Smith") or by nickname; he plays for his own season team if he has one,
+// otherwise for `team`. Already in that game, or no game today: nothing happens.
+export const ROSTER_GAME_SPOTS = {
+  3: [{ name: 'Will Walsh', team: 'giffinland' }, { nickname: 'The Giffinland Coach', team: 'giffinland' }],
+  4: [{ name: 'Logan', team: 'giffinland' }, { name: 'Will Walsh', team: 'giffinland' }],
+};
+export const ROSTER_VERSION = 4;
 
 // Season teams. Set up once (settings.teamsVersion); after that league admins edit them in
 // Settings. Games line them up automatically: RSVP in and you're on your team's side.
@@ -25,6 +42,9 @@ export const HFL_TEAMS = [
 export const TEAMS_VERSION = 1;
 export const seasonTeams = (db) => (db.settings.teams || []).filter((t) => t.players?.length);
 export const seasonTeamOf = (db, pid) => seasonTeams(db).find((t) => t.players.includes(pid)) || null;
+// Coach: set by league admins (team.coachId). He plays for the team he coaches.
+export const seasonCoach = (db, team) => (team?.coachId && db.players.some((p) => p.id === team.coachId && p.active !== false) ? team.coachId : null);
+export const coachOf = (db, pid) => seasonTeams(db).find((t) => seasonCoach(db, t) === pid) || null;
 // Captain: the highest-rated player on the team (ties: alphabetical).
 export function seasonCaptain(db, team, league = computeLeague(db)) {
   const name = (id) => db.players.find((p) => p.id === id)?.name || '';
@@ -40,7 +60,37 @@ function placeBySeasonTeam(db, g, pid) {
   if (!side || g.teams.A.includes(pid) || g.teams.B.includes(pid)) return;
   g.teams[side].push(pid);
 }
-const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8'];
+const ROSTER_COLORS = ['#ff5a1f', '#36c8ff', '#ffc53d', '#2fd57b', '#ff3d5e', '#a78bfa', '#f472b6', '#22d3ee', '#fb923c', '#84cc16', '#e2e8f0', '#facc15', '#f97316', '#38bdf8', '#14b8a6'];
+// "The Giffinland Coach" → "giffinlandcoach", so a nickname matches however it's typed.
+const nameKey = (s) => String(s || '').toLowerCase().replace(/^\s*the\s+/, '').replace(/[^a-z0-9]/g, '');
+// The game on right now: live, or today's if it hasn't kicked off yet.
+const currentGame = (db) => db.games.find((g) => g.status === 'live')
+  || db.games.find((g) => g.status === 'scheduled' && g.date === localToday())
+  || db.games.filter((g) => g.status === 'final' && g.date === localToday()).at(-1) || null;
+const nameMatches = (player, name) => {
+  const have = String(player.name || '').trim().toLowerCase();
+  const want = name.trim().toLowerCase();
+  return have === want || (!want.includes(' ') && have.split(/\s+/)[0] === want);
+};
+// ROSTER_GAME_SPOTS for one roster version. Returns who went where.
+function placeInCurrentGame(db, spots = []) {
+  const g = currentGame(db);
+  if (!g || !spots.length) return [];
+  const placed = [];
+  for (const spot of spots) {
+    const p = db.players.find((x) => x.active !== false && (spot.name
+      ? nameMatches(x, spot.name)
+      : nameKey(x.nickname) === nameKey(spot.nickname)));
+    if (!p || g.teams.A.includes(p.id) || g.teams.B.includes(p.id)) continue;
+    const own = seasonTeamOf(db, p.id);
+    const side = (own && sideOfTeam(g, own.id)) || sideOfTeam(g, spot.team);
+    if (!side) continue;
+    g.teams[side].push(p.id);
+    if (g.status === 'scheduled') g.rsvps[p.id] = 'in';
+    placed.push({ id: p.id, name: p.name, side, team: g.teamNames?.[side] || side });
+  }
+  return placed;
+}
 const FAME_CATEGORIES = ['best', 'dumb', 'drop'];
 const ROUTE_STYLES = ['route', 'motion', 'block'];
 
@@ -324,8 +374,21 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
         seen.add(pid);
         return pid;
       });
-      return { ...(prev.get(id) || {}), id, name: str(t.name, 24, { required: true, name: 'team name' }), color: color(t.color, i ? '#36c8ff' : '#ff5a1f'), season: db.settings.season, players };
+      const team = { ...(prev.get(id) || {}), id, name: str(t.name, 24, { required: true, name: 'team name' }), color: color(t.color, i ? '#36c8ff' : '#ff5a1f'), season: db.settings.season, players };
+      if ('coachId' in t) {
+        if (t.coachId) team.coachId = player(db, t.coachId, 'coach').id;
+        else delete team.coachId;
+      }
+      return team;
     });
+    const [c0, c1] = db.settings.teams.map((t) => t.coachId);
+    if (c0 && c0 === c1) throw bad('one coach per team: pick someone else for the other team');
+    // a coach plays for the team he coaches
+    for (const t of db.settings.teams) {
+      if (!t.coachId || t.players.includes(t.coachId)) continue;
+      for (const other of db.settings.teams) other.players = other.players.filter((pid) => pid !== t.coachId);
+      t.players.push(t.coachId);
+    }
     // games that haven't started follow the new teams
     for (const g of db.games) {
       if (g.status !== 'scheduled' || !g.teamIds) continue;
@@ -355,8 +418,10 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
           added.push(name);
         }
       }
+      const placed = [];
+      for (let v = have + 1; v <= ROSTER_VERSION; v++) placed.push(...placeInCurrentGame(db, ROSTER_GAME_SPOTS[v]));
       db.settings.rosterVersion = ROSTER_VERSION;
-      return { changed: added.length > 0, removed: 0, added: added.length, names: added };
+      return { changed: added.length > 0 || placed.length > 0, removed: 0, added: added.length, names: added, placed };
     }
     const wanted = new Map(HFL_ROSTER.map((n) => [n.toLowerCase(), n]));
     const keep = new Map(); // roster name → existing player (first one wins)
@@ -488,8 +553,18 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if (st.length === 2) {
       g.teamIds = { A: st[0].id, B: st[1].id };
       g.teamNames = { A: st[0].name, B: st[1].name };
+      // Bowl seasons: SEASON_GAMES games, the last is the Bowl, then the offseason.
+      const os = db.settings.offseason;
+      if (os && os.phase !== 'closed') {
+        throw bad(os.phase === 'keepers'
+          ? "The season's over: coaches are picking keepers, then it's free agency. The next game comes after that."
+          : "It's free agency. The next season's first game comes after it closes.");
+      }
+      if (weekGames(db, g.season).length >= SEASON_GAMES) throw bad(`Season ${g.season} already has its ${SEASON_GAMES} games. The next one comes after the Bowl and free agency.`);
+      g.week = SEASON_GAMES; // placeholder so it counts; renumberWeeks sets the real one
     }
     db.games.push(g);
+    if (g.week) renumberWeeks(db, g.season);
     return g;
   });
   on('PATCH', '/api/games/:id', (db, b, { id }) => {
@@ -506,11 +581,13 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
       if ('A' in b.teamNames) g.teamNames.A = str(b.teamNames.A, 24, { required: true, name: 'team name' });
       if ('B' in b.teamNames) g.teamNames.B = str(b.teamNames.B, 24, { required: true, name: 'team name' });
     }
+    if (g.week && ('date' in b || 'time' in b)) renumberWeeks(db, g.season);
     return g;
   });
   on('DELETE', '/api/games/:id', (db, b, { id }) => {
-    game(db, id);
-    db.games = db.games.filter((g) => g.id !== id);
+    const g = game(db, id);
+    db.games = db.games.filter((x) => x.id !== id);
+    if (g.week) renumberWeeks(db, g.season);
   });
   on('POST', '/api/games/:id/rsvp', (db, b, { id }) => {
     const g = game(db, id);
@@ -583,7 +660,126 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if (g.status !== 'live') throw bad('game is not live');
     g.status = 'final';
     g.endedAt = now();
+    // The Bowl is over: the offseason starts (once per season).
+    const os = db.settings.offseason;
+    if (g.bowl && !(os && String(os.season) === String(g.season))) {
+      db.settings.offseason = { season: g.season, bowlId: g.id, phase: 'keepers', startedAt: now(), keepers: {}, offers: [], signings: [], feed: [{ at: now(), kind: 'bowl', gameId: g.id }] };
+    }
     return g;
+  });
+
+  // --- offseason: keepers and free agency (see offseason.js)
+  const offseason = (db, ...phases) => {
+    const os = db.settings.offseason;
+    if (!os) throw bad('Free agency opens after the Bowl');
+    if (phases.length && !phases.includes(os.phase)) {
+      throw bad({ keepers: 'Coaches are still picking keepers', frenzy: 'Free agency is open: keepers are locked', closed: 'Free agency is over' }[os.phase] || 'Not right now');
+    }
+    return os;
+  };
+  const fa = (db) => faState(db, { ovr: computeLeague(db).ovr, at: now() });
+  const feed = (os, item) => { os.feed = [...(os.feed || []), { at: now(), ...item }].slice(-300); };
+  // A team's coach (with his PIN), or a league admin.
+  const requireCoach = (db, b, teamId) => {
+    const t = (db.settings.teams || []).find((x) => x.id === teamId);
+    if (!t) throw bad('unknown team');
+    const who = whoIsAsking(db, b);
+    if (isCommish(db, who) || (who && seasonCoach(db, t) === who)) return t;
+    throw forbidden(who ? `Only ${t.name}'s coach (or a league admin) can do that` : 'Pick yourself and enter your PIN first');
+  };
+  const openFrenzy = (os) => {
+    os.phase = 'frenzy';
+    os.opensAt = now();
+    os.endsAt = frenzyEnd(os.opensAt);
+    feed(os, { kind: 'open' });
+  };
+  // Coach keeps up to KEEPERS players; lock: true means he's done. Both locked: free agency opens.
+  on('POST', '/api/offseason/keepers', (db, b) => {
+    const os = offseason(db, 'keepers');
+    const t = requireCoach(db, b, b.teamId);
+    const st = fa(db);
+    const team = st.teamOf(t.id);
+    const ids = [...new Set(Array.isArray(b.ids) ? b.ids : [])];
+    if (ids.length > KEEPERS) throw bad(`Keep up to ${KEEPERS} players`);
+    for (const pid of ids) if (!team.eligibleKeepers.includes(pid)) throw bad(`${db.players.find((p) => p.id === pid)?.name || 'That player'} isn't on ${t.name}`);
+    os.keepers = { ...(os.keepers || {}), [t.id]: { players: ids.map((id) => ({ id, amount: keeperPrice(st.value(id)) })), locked: !!b.lock, at: now() } };
+    if (b.lock) feed(os, { kind: 'keepers', teamId: t.id, ids });
+    if (st.teams.every((x) => os.keepers[x.id]?.locked)) openFrenzy(os);
+    return os;
+  });
+  on('POST', '/api/offseason/open', (db, b) => {
+    requireCommish(db, b, 'open free agency early');
+    const os = offseason(db, 'keepers');
+    openFrenzy(os);
+    return os;
+  });
+  // Offer (or change an offer): one per team per player. Amounts are in $M.
+  on('POST', '/api/offseason/offers', (db, b) => {
+    const os = offseason(db, 'frenzy');
+    const t = requireCoach(db, b, b.teamId);
+    const amount = roundHalf(Number(b.amount));
+    if (!Number.isFinite(amount)) throw bad('How much? (in $M)');
+    const st = fa(db);
+    const problem = dealProblem(st, t.id, b.playerId, amount);
+    if (problem) throw bad(problem);
+    const mine = (os.offers || []).find((o) => o.teamId === t.id && o.playerId === b.playerId);
+    if (mine) Object.assign(mine, { amount, at: now() });
+    else {
+      os.offers = [...(os.offers || []), { id: newId(), teamId: t.id, playerId: b.playerId, amount, at: now(), by: whoIsAsking(db, b) }];
+      feed(os, { kind: 'offer', teamId: t.id, playerId: b.playerId });
+    }
+    return mine || os.offers.at(-1);
+  });
+  const offerOf = (os, oid) => {
+    const o = (os.offers || []).find((x) => x.id === oid);
+    if (!o) throw bad('That offer is gone (withdrawn, or he signed somewhere)');
+    return o;
+  };
+  on('DELETE', '/api/offseason/offers/:oid', (db, b, { oid }) => {
+    const os = offseason(db, 'frenzy');
+    const o = offerOf(os, oid);
+    requireCoach(db, b, o.teamId);
+    os.offers = os.offers.filter((x) => x.id !== oid);
+  });
+  // The player picks a contract. 1 season, the amount offered.
+  on('POST', '/api/offseason/offers/:oid/sign', (db, b, { oid }) => {
+    const os = offseason(db, 'frenzy');
+    const o = offerOf(os, oid);
+    requireSelfOrCommish(db, b, o.playerId, 'sign this contract');
+    const problem = dealProblem(fa(db), o.teamId, o.playerId, o.amount);
+    if (problem) throw bad(problem);
+    const others = os.offers.filter((x) => x.playerId === o.playerId && x.id !== oid);
+    os.signings = [...(os.signings || []), { playerId: o.playerId, teamId: o.teamId, amount: o.amount, at: now() }];
+    os.offers = os.offers.filter((x) => x.playerId !== o.playerId);
+    feed(os, { kind: 'sign', teamId: o.teamId, playerId: o.playerId, amount: o.amount, passedOn: others.map((x) => x.teamId) });
+    return os.signings.at(-1);
+  });
+  on('POST', '/api/offseason/offers/:oid/decline', (db, b, { oid }) => {
+    const os = offseason(db, 'frenzy');
+    const o = offerOf(os, oid);
+    requireSelfOrCommish(db, b, o.playerId, 'turn down this offer');
+    os.offers = os.offers.filter((x) => x.id !== oid);
+  });
+  // The week is up (anyone's phone can do this once the clock runs out), or an admin closes it
+  // early: next season starts with coach + keepers + signings. Unsigned players are free agents.
+  on('POST', '/api/offseason/close', (db, b) => {
+    const os = offseason(db, 'frenzy');
+    const st = fa(db);
+    if (!st.over) requireCommish(db, b, 'close free agency early');
+    const next = nextSeasonName(os.season);
+    db.settings.teams = (db.settings.teams || []).map((t) => ({ ...t, season: next, players: st.teamOf(t.id)?.roster || t.players }));
+    db.settings.contracts = [...(db.settings.contracts || []),
+      ...st.teams.flatMap((t) => [
+        ...t.kept.map((k) => ({ playerId: k.id, teamId: t.id, amount: k.amount, kind: 'keeper', season: next })),
+        ...t.signed.map((s) => ({ playerId: s.playerId, teamId: t.id, amount: s.amount, kind: 'signed', season: next })),
+      ])];
+    db.settings.season = next;
+    os.phase = 'closed';
+    os.closedAt = now();
+    os.nextSeason = next;
+    os.offers = [];
+    feed(os, { kind: 'close', season: next, unsigned: st.freeAgents });
+    return { season: next };
   });
   on('POST', '/api/games/:id/reopen', (db, b, { id }) => {
     const g = game(db, id);
