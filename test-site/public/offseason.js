@@ -1,17 +1,25 @@
 // Bowl games, keepers and free agency (test site preview).
 //
-// A season is SEASON_GAMES games; the last one is the HFL Bowl. When the Bowl ends the
-// offseason starts:
+// A season is SEASON_GAMES (9) games. Every 4th game is a Bowl (game 4 is Bowl I, game 8 is
+// Bowl II) and game 9 is the Super Bowl. When the Super Bowl ends the offseason starts:
 //   1. keepers: each coach keeps up to KEEPERS players from his roster (a "keeper tag" that
 //      costs a little more than the player's market value, like an NFL franchise tag);
-//   2. frenzy: a week of free agency. Coaches offer 1-season contracts out of an equal
-//      salary cap; each free agent picks the offer he likes and taps "Sign contract";
+//   2. frenzy: a week of free agency. Coaches offer 1-season (9-game) contracts out of an
+//      equal salary cap; each free agent picks the offer he likes and taps "Sign contract";
 //   3. closed: the next season starts with coach + keepers + signings on each team.
 //      Anyone who didn't sign stays a free agent.
 // The money is fake. Everything here is plain data in settings.offseason, so the same
 // rules run on the server, in the browser (Firebase) and in tests.
 
-export const SEASON_GAMES = 4;
+export const SEASON_GAMES = 9;
+export const BOWL_EVERY = 4; // games 4 and 8 are Bowls; the last game is the Super Bowl
+// "Bowl I", "Bowl II", "Super Bowl", or null for a regular game.
+export function bowlName(week) {
+  if (week === SEASON_GAMES) return 'Super Bowl';
+  if (week && week % BOWL_EVERY === 0 && week < SEASON_GAMES) return `Bowl ${['I', 'II', 'III', 'IV', 'V'][week / BOWL_EVERY - 1] || week / BOWL_EVERY}`;
+  return null;
+}
+export const bowlTitle = (week) => (bowlName(week) ? `HFL ${bowlName(week)}` : null);
 export const CAP = 100; // $M per team, the same for everyone
 export const MIN_DEAL = 1; // $M
 export const MAX_DEAL = 40; // $M, nobody gets more than 40% of a cap
@@ -49,7 +57,8 @@ export function faState(db, { ovr = {}, at = new Date().toISOString() } = {}) {
   const activeSet = new Set(active);
   const coachIds = new Set(teams.map((t) => t.coachId).filter((id) => id && activeSet.has(id)));
   const season = db.settings?.season;
-  const bowl = (db.games || []).find((g) => g.bowl && String(g.season) === String(os?.season ?? season)) || null;
+  // the Super Bowl that ended the season (or this season's, before it's played)
+  const bowl = (db.games || []).find((g) => g.superBowl && String(g.season) === String(os?.season ?? season)) || null;
   const phase = os ? os.phase : 'season';
   const crewAvg = active.length ? active.reduce((t, id) => t + (ovr[id] ?? 70), 0) / active.length : 70;
   const value = (pid) => marketValue(ovr[pid] ?? 70, crewAvg);

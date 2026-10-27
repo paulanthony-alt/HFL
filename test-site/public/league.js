@@ -5,7 +5,7 @@ import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
 import { applyClock, CLOCK_ACTIONS } from './clock.js';
 import { sha256hex } from './sha256.js';
-import { SEASON_GAMES, KEEPERS, faState, dealProblem, keeperPrice, frenzyEnd, nextSeasonName, weekGames, roundHalf } from './offseason.js';
+import { SEASON_GAMES, KEEPERS, bowlName, faState, dealProblem, keeperPrice, frenzyEnd, nextSeasonName, weekGames, roundHalf } from './offseason.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
@@ -15,12 +15,15 @@ export const HFL_ROSTER = ['Kellen', 'Max', 'Boden', 'Liam', 'Evan', 'Henry', 'M
 // Version 1 set up the original crew (and cleared everyone else). Later versions only add
 // the new guys listed here: nobody is ever removed again.
 export const ROSTER_ADDITIONS = { 2: ['Teddy', 'Bobby', 'Noah'], 3: ['Will Walsh'] };
-// Bowl seasons: number a season's games by date (week 1..), the last one is the Bowl.
+// Bowl seasons: number a season's games by date (week 1..9). Games 4 and 8 are Bowls,
+// game 9 is the Super Bowl.
 function renumberWeeks(db, season) {
   const list = weekGames(db, season).sort((a, b) => `${a.date}T${a.time || '00:00'}|${a.createdAt || ''}` < `${b.date}T${b.time || '00:00'}|${b.createdAt || ''}` ? -1 : 1);
   list.forEach((g, i) => {
     g.week = i + 1;
-    if (g.week === SEASON_GAMES) g.bowl = true; else delete g.bowl;
+    const name = bowlName(g.week);
+    if (name && g.week < SEASON_GAMES) g.bowl = true; else delete g.bowl;
+    if (g.week === SEASON_GAMES) g.superBowl = true; else delete g.superBowl;
   });
 }
 // One-time: put guys into the game that's on right now (live, or today's if it hasn't kicked
@@ -553,14 +556,14 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if (st.length === 2) {
       g.teamIds = { A: st[0].id, B: st[1].id };
       g.teamNames = { A: st[0].name, B: st[1].name };
-      // Bowl seasons: SEASON_GAMES games, the last is the Bowl, then the offseason.
+      // Bowl seasons: SEASON_GAMES games (Bowls at 4 and 8, the Super Bowl last), then the offseason.
       const os = db.settings.offseason;
       if (os && os.phase !== 'closed') {
         throw bad(os.phase === 'keepers'
           ? "The season's over: coaches are picking keepers, then it's free agency. The next game comes after that."
           : "It's free agency. The next season's first game comes after it closes.");
       }
-      if (weekGames(db, g.season).length >= SEASON_GAMES) throw bad(`Season ${g.season} already has its ${SEASON_GAMES} games. The next one comes after the Bowl and free agency.`);
+      if (weekGames(db, g.season).length >= SEASON_GAMES) throw bad(`Season ${g.season} already has its ${SEASON_GAMES} games. The next one comes after the Super Bowl and free agency.`);
       g.week = SEASON_GAMES; // placeholder so it counts; renumberWeeks sets the real one
     }
     db.games.push(g);
@@ -660,9 +663,9 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if (g.status !== 'live') throw bad('game is not live');
     g.status = 'final';
     g.endedAt = now();
-    // The Bowl is over: the offseason starts (once per season).
+    // The Super Bowl is over: the offseason starts (once per season).
     const os = db.settings.offseason;
-    if (g.bowl && !(os && String(os.season) === String(g.season))) {
+    if (g.superBowl && !(os && String(os.season) === String(g.season))) {
       db.settings.offseason = { season: g.season, bowlId: g.id, phase: 'keepers', startedAt: now(), keepers: {}, offers: [], signings: [], feed: [{ at: now(), kind: 'bowl', gameId: g.id }] };
     }
     return g;
@@ -671,7 +674,7 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   // --- offseason: keepers and free agency (see offseason.js)
   const offseason = (db, ...phases) => {
     const os = db.settings.offseason;
-    if (!os) throw bad('Free agency opens after the Bowl');
+    if (!os) throw bad('Free agency opens after the Super Bowl');
     if (phases.length && !phases.includes(os.phase)) {
       throw bad({ keepers: 'Coaches are still picking keepers', frenzy: 'Free agency is open: keepers are locked', closed: 'Free agency is over' }[os.phase] || 'Not right now');
     }

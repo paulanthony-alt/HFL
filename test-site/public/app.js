@@ -11,7 +11,7 @@ import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wr
 import { CastView } from './cast.js';
 import { clockElapsed, formatClock, quarterLabel, isRunning } from './clock.js';
 import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
-import { SEASON_GAMES, CAP, KEEPERS, MIN_DEAL, MAX_DEAL, FRENZY_DAYS, faState, keeperPrice, money, timeLeft } from './offseason.js';
+import { SEASON_GAMES, BOWL_EVERY, CAP, KEEPERS, MIN_DEAL, MAX_DEAL, FRENZY_DAYS, faState, keeperPrice, money, timeLeft, bowlName, bowlTitle } from './offseason.js';
 
 // ---------------------------------------------------------------------------
 // State + helpers
@@ -384,9 +384,10 @@ function standingsCard(season = S.db.settings.season, { compact = false } = {}) 
     <section class="card standings">
       <div class="row-between"><h3>Standings</h3><span class="muted small">Season ${h(season)}</span></div>
       <table class="st-table"><thead><tr><th class="l">Team</th><th>W</th><th>L</th>${compact ? '' : '<th>T</th><th>PF</th><th>PA</th>'}<th>Diff</th></tr></thead><tbody>
-        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { if (compact) return ''; const c = seasonCaptain(S.db, t(r.id), S.league); const co = seasonCoach(S.db, t(r.id)); const parts = [co && `Coach ${h(firstName(co))}`, c && `Captain ${h(nick(c))}`].filter(Boolean); return parts.length ? `<div class="muted small st-cap">${parts.join(' · ')}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
+        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { if (compact) return ''; const c = seasonCaptain(S.db, t(r.id), S.league); const co = seasonCoach(S.db, t(r.id)); const parts = co && co === c ? [`Coach & captain ${h(firstName(co))}`] : [co && `Coach ${h(firstName(co))}`, c && `Captain ${h(nick(c))}`].filter(Boolean); return parts.length ? `<div class="muted small st-cap">${parts.join(' · ')}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
       </tbody></table>
       ${rows.every((r) => !r.gp) ? '<p class="muted small">No games finished yet this season.</p>' : ''}
+      ${bowlTrophies(season)}
     </section>`;
 }
 
@@ -475,14 +476,14 @@ function matchupHero(g) {
       <div class="mu-side mu-${k}">
         <span class="mu-rec">${r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '&nbsp;'}</span>
         <b class="mu-name" style="--len:${Math.max(6, teamName(g, 'A').length, teamName(g, 'B').length)}">${h(teamName(g, k))}</b>
-        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${coach ? `<span>Coach <b>${h(firstName(coach))}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}</span>
+        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${coach && coach === cap ? `<span>Coach & capt. <b>${h(firstName(coach))}</b></span>` : `${coach ? `<span>Coach <b>${h(firstName(coach))}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}`}</span>
       </div>`;
   };
   const days = Math.round((Date.parse(`${g.date}T00:00`) - Date.parse(`${localToday()}T00:00`)) / 864e5);
   const when = days <= 0 ? 'Game day' : days === 1 ? 'Tomorrow' : `In ${days} days`;
   return `
-    <div class="mu ${g.bowl ? 'mu-is-bowl' : ''}" style="--ca:${h(sideColor(g, 'A'))};--cb:${h(sideColor(g, 'B'))}">
-      ${g.bowl ? '<div class="mu-bowl">🏆 The HFL Bowl</div>' : ''}
+    <div class="mu ${bowlName(g.week) ? 'mu-is-bowl' : ''}" style="--ca:${h(sideColor(g, 'A'))};--cb:${h(sideColor(g, 'B'))}">
+      ${bowlName(g.week) ? `<div class="mu-bowl ${g.superBowl ? 'super' : ''}">🏆 The ${h(bowlTitle(g.week))}</div>` : ''}
       ${side('A')}
       <div class="mu-vs"><span><b>VS</b></span></div>
       ${side('B')}
@@ -768,7 +769,7 @@ function gamePanel(g) {
     <div class="game-head">
       ${ticket(g.date)}
       <div class="gh-main">
-        <div class="kicker ${g.bowl ? 'gold' : ''}">${g.bowl ? '🏆 The HFL Bowl · ' : g.week ? `Week ${g.week} of ${SEASON_GAMES} · ` : ''}${g.status === 'scheduled' ? 'Next game' : g.status === 'live' ? 'Game on' : 'Final'}</div>
+        <div class="kicker ${bowlName(g.week) ? 'gold' : ''}">${bowlName(g.week) ? `🏆 ${h(bowlTitle(g.week))} · ` : g.week ? `Week ${g.week} of ${SEASON_GAMES} · ` : ''}${g.status === 'scheduled' ? 'Next game' : g.status === 'live' ? 'Game on' : 'Final'}</div>
         <h2 class="gh-title">${h(fmtDate(g.date, { weekday: 'long' }))}${g.time ? ` <span class="gh-time">${h(fmtTime(g.time))}</span>` : ''}</h2>
         <div class="gh-loc">${PIN}${h(g.location || 'Location TBD')}</div>
       </div>
@@ -1320,7 +1321,7 @@ function boxScore(g, info) {
 function finalSection(g) {
   const info = gameInfo(g);
   return `
-    ${g.bowl ? bowlChampion(g) : ''}
+    ${bowlName(g.week) ? bowlChampion(g) : ''}
     ${scoreboard(g)}
     ${momentumChart(g)}
     ${recapCard(g)}
@@ -1440,13 +1441,27 @@ setInterval(() => {
 
 function bowlChampion(g) {
   const w = gameInfo(g).summary.winner;
+  const name = bowlName(g.week);
   return `
-    <a class="bowl-champ" href="#/fa">
+    <a class="bowl-champ ${g.superBowl ? 'super' : ''}" href="${g.superBowl ? '#/fa' : '#/stats'}">
       <span class="bowl-trophy">🏆</span>
-      <span class="grow"><span class="kicker gold">HFL Bowl · Season ${h(g.season)}</span>
-        <b>${w === 'tie' ? 'The Bowl ends in a tie' : `${h(teamName(g, w))} win the Bowl`}</b>
-        <small>Offseason: coaches keep ${KEEPERS}, then a week of free agency ›</small></span>
+      <span class="grow"><span class="kicker gold">HFL ${h(name)} · Season ${h(g.season)}</span>
+        <b>${w === 'tie' ? `${h(name)} ends in a tie` : g.superBowl ? `${h(teamName(g, w))} are HFL champions` : `${h(teamName(g, w))} win ${h(name)}`}</b>
+        <small>${g.superBowl ? `Offseason: coaches keep ${KEEPERS}, then a week of free agency ›` : `${SEASON_GAMES - g.week} game${SEASON_GAMES - g.week === 1 ? '' : 's'} left${g.week + BOWL_EVERY < SEASON_GAMES ? ` · next: Bowl at game ${g.week + BOWL_EVERY}` : ''} · Super Bowl at game ${SEASON_GAMES} ›`}</small></span>
     </a>`;
+}
+
+// Who won this season's Bowls and Super Bowl (under the standings).
+function bowlTrophies(season) {
+  const weeks = [...Array(SEASON_GAMES).keys()].map((i) => i + 1).filter((w) => bowlName(w));
+  const games = S.db.games.filter((g) => g.week && String(g.season) === String(season));
+  if (!games.length) return '';
+  return `<div class="bowl-row">${weeks.map((w) => {
+    const g = games.find((x) => x.week === w);
+    const win = g?.status === 'final' ? gameInfo(g).summary.winner : null;
+    const t = win && win !== 'tie' ? seasonTeams(S.db).find((x) => x.id === g.teamIds?.[win]) : null;
+    return `<span class="bowl-cell ${w === SEASON_GAMES ? 'super' : ''}"><small>🏆 ${h(bowlName(w))}</small>${t ? `<b style="color:${h(t.color)}">${h(t.name)}</b>` : `<em>${win === 'tie' ? 'Tie' : `Game ${w}`}</em>`}</span>`;
+  }).join('')}</div>`;
 }
 
 function faTileSub() {
@@ -1454,7 +1469,7 @@ function faTileSub() {
   if (st.phase === 'keepers') return 'Coaches are picking keepers';
   if (st.phase === 'frenzy') return `Frenzy · ${timeLeft(st.msLeft)} left`;
   if (st.phase === 'closed' && !S.db.games.some((g) => g.season === S.db.settings.season)) return `Season ${h(S.db.settings.season)} rosters set`;
-  return st.week > SEASON_GAMES ? 'Opens after the Bowl' : `Opens after the Bowl · week ${st.week} of ${SEASON_GAMES} next`;
+  return st.week > SEASON_GAMES ? 'Opens after the Super Bowl' : `Opens after the Super Bowl · week ${st.week} of ${SEASON_GAMES} next`;
 }
 
 function faTickerItems() {
@@ -1463,7 +1478,7 @@ function faTickerItems() {
   if (st.phase === 'season') return out;
   if (st.bowl?.status === 'final') {
     const w = gameInfo(st.bowl).summary.winner;
-    if (w && w !== 'tie' && st.phase !== 'closed') out.push(`<a class="tk-item" href="#/g/${st.bowl.id}"><em>🏆 Bowl champs</em><span class="tk-team win" style="--tc:${h(sideColor(st.bowl, w))}">${h(teamName(st.bowl, w))}</span></a>`);
+    if (w && w !== 'tie' && st.phase !== 'closed') out.push(`<a class="tk-item" href="#/g/${st.bowl.id}"><em>🏆 HFL champs</em><span class="tk-team win" style="--tc:${h(sideColor(st.bowl, w))}">${h(teamName(st.bowl, w))}</span></a>`);
   }
   if (st.phase === 'keepers') out.push('<a class="tk-item" href="#/fa"><em>Offseason</em><span>Coaches are picking keepers</span></a>');
   if (st.phase === 'frenzy') out.push(`<a class="tk-item" href="#/fa"><em class="live">Free agency</em><b>${timeLeft(st.msLeft)} left</b><span class="muted">${st.freeAgents.length} available</span></a>`);
@@ -1487,11 +1502,13 @@ function newGameWeekNote() {
   if (seasonTeams(S.db).length !== 2) return '';
   const st = faNow();
   if (st.phase === 'keepers' || st.phase === 'frenzy') return `<a class="banner fa-banner" href="#/fa"><span class="banner-dot"></span><span><b>The season's over.</b> The next game comes after free agency.</span><span class="banner-go">›</span></a>`;
-  if (st.week > SEASON_GAMES) return `<p class="fa-week bowl">🏆 Season ${h(st.season)}'s ${SEASON_GAMES} games are set. The Bowl ends it.</p>`;
-  return `<p class="fa-week ${st.week === SEASON_GAMES ? 'bowl' : ''}">${st.week === SEASON_GAMES ? `🏆 This is game ${SEASON_GAMES}: <b>the HFL Bowl</b>. Free agency opens when it ends.` : `Week ${st.week} of ${SEASON_GAMES} · the Bowl is game ${SEASON_GAMES}`}</p>`;
+  if (st.week > SEASON_GAMES) return `<p class="fa-week bowl">🏆 Season ${h(st.season)}'s ${SEASON_GAMES} games are set. The Super Bowl ends it.</p>`;
+  const name = bowlName(st.week);
+  const next = [...Array(SEASON_GAMES - st.week).keys()].map((i) => st.week + 1 + i).find((w) => bowlName(w));
+  return `<p class="fa-week ${name ? 'bowl' : ''}">${st.week === SEASON_GAMES ? `🏆 This is game ${SEASON_GAMES}: <b>the HFL Super Bowl</b>. Free agency opens when it ends.` : name ? `🏆 This is game ${st.week}: <b>HFL ${h(name)}</b>.` : `Week ${st.week} of ${SEASON_GAMES}${next ? ` · next Bowl: ${h(bowlName(next))} at game ${next}` : ''}`}</p>`;
 }
 
-const FA_STEPS = [['bowl', 'Bowl'], ['keepers', 'Keepers'], ['frenzy', 'Free agency'], ['closed', 'New season']];
+const FA_STEPS = [['bowl', 'Super Bowl'], ['keepers', 'Keepers'], ['frenzy', 'Free agency'], ['closed', 'New season']];
 function faSteps(phase) {
   const at = FA_STEPS.findIndex(([k]) => k === phase);
   return `<ol class="fa-steps">${FA_STEPS.map(([, label], i) => `<li class="${i < at ? 'done' : i === at ? 'on' : ''}"><span>${i < at ? '✓' : i + 1}</span>${label}</li>`).join('')}</ol>`;
@@ -1501,10 +1518,10 @@ function faHowItWorks(open = false) {
   return `
     <details class="card-lite fa-how" ${open ? 'open' : ''}><summary>How it works</summary>
       <ol class="fa-rules">
-        <li>Every season is <b>${SEASON_GAMES} games</b>. Game ${SEASON_GAMES} is <b>the HFL Bowl</b>.</li>
-        <li>After the Bowl, each coach can <b>keep ${KEEPERS} players</b>. A keeper costs his market value plus 20% (like a franchise tag).</li>
+        <li>Every season is <b>${SEASON_GAMES} games</b>. Every ${BOWL_EVERY}th game is a Bowl (<b>Bowl I</b> at game ${BOWL_EVERY}, <b>Bowl II</b> at game ${BOWL_EVERY * 2}) and game ${SEASON_GAMES} is <b>the HFL Super Bowl</b>.</li>
+        <li>After the Super Bowl, each coach can <b>keep ${KEEPERS} players</b>. A keeper costs his market value plus 20% (like a franchise tag).</li>
         <li>Then a <b>${FRENZY_DAYS}-day free agency frenzy</b>. Every team has the same <b>${money(CAP)} salary cap</b> and room for <b>${faNow().rosterMax} players</b> including the coach.</li>
-        <li>Coaches tap a free agent and <b>offer a contract</b> (${money(MIN_DEAL)} to ${money(MAX_DEAL)}, 1 season = ${SEASON_GAMES} games). They can raise or pull it any time.</li>
+        <li>Coaches tap a free agent and <b>offer a contract</b> (${money(MIN_DEAL)} to ${money(MAX_DEAL)}) for <b>1 season, all ${SEASON_GAMES} games</b>. They can raise or pull it any time.</li>
         <li>Players see their offers and tap <b>Sign contract</b> on the one they want. The other offers are off the table. A signing has to fit under the cap when he signs.</li>
         <li>When the week is up the new season starts. Anyone who didn't sign stays a free agent and can still play.</li>
       </ol>
@@ -1607,7 +1624,7 @@ function faWire(st) {
   if (!items.length) return '';
   const tn = (id) => teamChip(faTeamById(id));
   const line = (f) => {
-    if (f.kind === 'bowl') { const g = S.db.games.find((x) => x.id === f.gameId); const w = g && gameInfo(g).summary.winner; return g ? `🏆 <b>${w === 'tie' ? 'The Bowl ends in a tie' : `${h(teamName(g, w))} win the HFL Bowl`}</b>, ${gameInfo(g).summary.score.A}–${gameInfo(g).summary.score.B}. The offseason is on.` : '🏆 The Bowl is over.'; }
+    if (f.kind === 'bowl') { const g = S.db.games.find((x) => x.id === f.gameId); const w = g && gameInfo(g).summary.winner; return g ? `🏆 <b>${w === 'tie' ? 'The Super Bowl ends in a tie' : `${h(teamName(g, w))} win the HFL Super Bowl`}</b>, ${gameInfo(g).summary.score.A}–${gameInfo(g).summary.score.B}. The offseason is on.` : '🏆 The Super Bowl is over.'; }
     if (f.kind === 'keepers') return `🔒 ${tn(f.teamId)} keep ${f.ids.length ? f.ids.map((x) => `<b>${h(nick(x))}</b>`).join(' and ') : 'nobody'}.`;
     if (f.kind === 'open') return `🚨 <b>Free agency is open.</b> ${FRENZY_DAYS} days. Coaches, go.`;
     if (f.kind === 'offer') return `👀 ${tn(f.teamId)} made an offer to <b>${h(nick(f.playerId))}</b>.`;
@@ -1628,7 +1645,8 @@ function viewFreeAgency() {
   if (st.phase === 'season') {
     return `
       ${pageHead(`Season ${h(st.season)}`, 'Free agency')}
-      <section class="card">${empty({ art: 'trophy', title: 'Opens after the HFL Bowl', text: `Every season is ${SEASON_GAMES} games, and game ${SEASON_GAMES} is the Bowl. ${st.week > SEASON_GAMES ? 'This season\'s Bowl is on the schedule.' : `Next up: week ${st.week}${st.week === SEASON_GAMES ? ', the Bowl' : ''}.`} When the Bowl's final whistle blows, coaches keep ${KEEPERS} players and free agency opens for a week.` })}</section>
+      <section class="card">${empty({ art: 'trophy', title: 'Opens after the Super Bowl', text: `Every season is ${SEASON_GAMES} games: Bowls at games ${BOWL_EVERY} and ${BOWL_EVERY * 2}, and the Super Bowl at game ${SEASON_GAMES}. ${st.week > SEASON_GAMES ? 'This season\'s Super Bowl is on the schedule.' : `Next up: week ${st.week}${bowlName(st.week) ? `, ${h(bowlName(st.week))}` : ''}.`} When the Super Bowl's final whistle blows, coaches keep ${KEEPERS} players and free agency opens for a week.` })}</section>
+      ${standingsCard(st.season)}
       ${faHowItWorks(true)}`;
   }
   const bowl = st.bowl;

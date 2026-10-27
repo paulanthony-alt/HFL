@@ -21,13 +21,17 @@ brings it back. To move something you like into the real app, copy the change in
 Rules live in `public/offseason.js`; routes in `public/league.js` (`/api/offseason/...`); screens
 at `#/fa` (Free agency) and `#/fa/p/<player>` (a player's free agency page).
 
-- A season is **4 games**; game 4 is **the HFL Bowl**. Only games made since this was added count.
-- When the Bowl ends, each **coach keeps up to 2 players** (a keeper costs his market value + 20%).
+- A season is **9 games**. Every 4th game is a Bowl: **Bowl I** (game 4) and **Bowl II** (game 8).
+  Game 9 is **the HFL Super Bowl**. The standings show who won each one. Only games made since
+  this was added count.
+- When the **Super Bowl** ends (not the Bowls), each **coach keeps up to 2 players** (a keeper costs
+  his market value + 20%).
 - Both coaches lock in (or an admin opens it early) → a **7-day free agency frenzy**. Equal
   **$100M cap** per team, roster max = half the crew. Coaches tap a free agent and offer a
-  1-season contract ($1M–$40M); players tap **Sign contract** on the offer they want.
+  1-season (9-game) contract ($1M–$40M); players tap **Sign contract** on the offer they want.
 - When the week is up (or an admin closes it), the next season starts (`2026` → `2026 S2`) with
   coach + keepers + signings on each team. Unsigned players stay free agents.
 
-To try it here: an admin sets both coaches in Settings, schedules 4 games for today, starts each,
-logs a play and blows the final whistle. The 4th is the Bowl, and the offseason starts.
+To try it here: an admin sets both coaches in Settings, schedules 9 games for today, starts each,
+logs a play and blows the final whistle. Games 4 and 8 are the Bowls; the 9th is the Super Bowl,
+and the offseason starts when it ends.

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRoutes, matchRoute, emptyDb } from '../public/league.js';
-import { faState, marketValue, keeperPrice, nextSeasonName, timeLeft, CAP, SEASON_GAMES, FRENZY_DAYS } from '../public/offseason.js';
+import { faState, marketValue, keeperPrice, nextSeasonName, timeLeft, bowlName, CAP, SEASON_GAMES, FRENZY_DAYS } from '../public/offseason.js';
 import * as E from '../public/engine.js';
 
 const routes = buildRoutes();
@@ -45,23 +45,28 @@ test('offseason helpers: market value, keeper tag, season names, countdown', () 
   assert.equal(nextSeasonName('2026 S2'), '2026 S3');
   assert.equal(timeLeft(5 * 864e5 + 4 * 36e5), '5d 4h');
   assert.equal(timeLeft(-1), '0m');
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8, 9].map(bowlName), [null, null, null, 'Bowl I', null, null, null, 'Bowl II', 'Super Bowl']);
 });
+// a season of game dates, one a week from Jan 1 2099
+const weeks = (n, from = 0) => Array.from({ length: n }, (_, i) => new Date(Date.UTC(2099, 0, 1 + 7 * (i + from))).toISOString().slice(0, 10));
 
-test('bowl seasons: 4 games, the 4th is the Bowl, no 5th until free agency is done', () => {
+test('bowl seasons: 9 games, Bowls at 4 and 8, the Super Bowl at 9, no 10th until free agency is done', () => {
   const db = league();
-  const gs = ['2099-01-01', '2099-01-08', '2099-01-15', '2099-01-22'].map((d) => call(db, 'POST', '/api/games', { date: d }));
-  assert.deepEqual(gs.map((g) => g.week), [1, 2, 3, 4]);
-  assert.deepEqual(gs.map((g) => !!g.bowl), [false, false, false, true]);
-  refused(db, 'POST', '/api/games', { date: '2099-01-29' }, /already has its 4 games/);
-  // move week 2 after the Bowl's date: weeks follow the calendar, the last one is the Bowl
-  call(db, 'PATCH', `/api/games/${gs[1].id}`, { date: '2099-02-05' });
-  assert.equal(gs[1].week, 4);
-  assert.equal(gs[1].bowl, true);
-  assert.ok(!gs[3].bowl);
-  // delete one: the rest renumber and a new game becomes the Bowl again
+  const gs = weeks(9).map((d) => call(db, 'POST', '/api/games', { date: d }));
+  assert.deepEqual(gs.map((g) => g.week), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(gs.map((g) => (g.superBowl ? 'SB' : g.bowl ? 'B' : '-')).join(''), '---B---BSB');
+  refused(db, 'POST', '/api/games', { date: weeks(1, 9)[0] }, /already has its 9 games/);
+  // move week 2 after the Super Bowl's date: weeks follow the calendar
+  call(db, 'PATCH', `/api/games/${gs[1].id}`, { date: weeks(1, 12)[0] });
+  assert.equal(gs[1].week, 9);
+  assert.equal(gs[1].superBowl, true);
+  assert.ok(!gs[8].superBowl && gs[8].week === 8 && gs[8].bowl, 'the old week 9 is now week 8, Bowl II');
+  assert.ok(gs[4].bowl && gs[4].week === 4, 'the old week 5 is now Bowl I');
+  assert.ok(!gs[3].bowl, 'the old week 4 is a regular game now');
+  // delete one: the rest renumber, and a new game becomes the Super Bowl again
   call(db, 'DELETE', `/api/games/${gs[0].id}`);
-  assert.deepEqual(db.games.map((g) => [g.date, g.week, !!g.bowl]), [['2099-02-05', 3, false], ['2099-01-15', 1, false], ['2099-01-22', 2, false]]);
-  assert.equal(call(db, 'POST', '/api/games', { date: '2099-03-01' }).bowl, true);
+  assert.equal(db.games.filter((g) => g.superBowl).length, 0);
+  assert.equal(call(db, 'POST', '/api/games', { date: weeks(1, 20)[0] }).superBowl, true);
   // games from before bowls existed don't count
   const old = emptyDb(); old.settings = structuredClone(db.settings); old.players = db.players;
   old.games = [1, 2, 3, 4, 5].map((i) => ({ id: `o${i}`, date: `2026-0${i}-01`, season: db.settings.season, status: 'final', teams: { A: [], B: [] }, events: [], rsvps: {}, mvpVotes: {} }));
@@ -71,16 +76,17 @@ test('bowl seasons: 4 games, the 4th is the Bowl, no 5th until free agency is do
 test('free agency: bowl → keepers → a week of offers and signings → next season', () => {
   const db = league();
   const [gif, sos] = db.settings.teams.map((t) => t.id);
-  refused(db, 'POST', '/api/offseason/keepers', { teamId: gif, ids: [], ...as('logan') }, /after the Bowl/);
-  for (const d of ['2099-01-01', '2099-01-08', '2099-01-15']) { const g = play(db, d); call(db, 'POST', `/api/games/${g.id}/final`); }
-  assert.equal(db.settings.offseason, undefined, 'no offseason before the Bowl');
-  const bowl = play(db, '2099-01-22');
-  assert.equal(bowl.bowl, true);
+  refused(db, 'POST', '/api/offseason/keepers', { teamId: gif, ids: [], ...as('logan') }, /after the Super Bowl/);
+  for (const d of weeks(8)) { const g = play(db, d); call(db, 'POST', `/api/games/${g.id}/final`); }
+  assert.equal(db.settings.offseason, undefined, 'Bowl I and Bowl II don\'t start free agency');
+  assert.deepEqual(db.games.filter((g) => g.bowl).map((g) => g.week), [4, 8]);
+  const bowl = play(db, weeks(1, 8)[0]);
+  assert.equal(bowl.superBowl, true);
   call(db, 'POST', `/api/games/${bowl.id}/final`);
   const os = db.settings.offseason;
   assert.equal(os.phase, 'keepers');
   assert.equal(os.season, '2026');
-  refused(db, 'POST', '/api/games', { date: '2099-01-29' }, /picking keepers/);
+  refused(db, 'POST', '/api/games', { date: weeks(1, 9)[0] }, /picking keepers/);
 
   // keepers: only that team's coach (or an admin), up to 2, from his own roster
   refused(db, 'POST', '/api/offseason/keepers', { teamId: gif, ids: ['ben'], lock: true, ...as('ben') }, /coach/);
@@ -157,7 +163,7 @@ test('free agency: bowl → keepers → a week of offers and signings → next s
 test('free agency: admins can act for a team without a coach, open it early, and rosters fill up', () => {
   const db = league();
   db.settings.teams[1].coachId = undefined;
-  for (const d of ['2099-01-01', '2099-01-08', '2099-01-15', '2099-01-22']) { const g = play(db, d); call(db, 'POST', `/api/games/${g.id}/final`); }
+  for (const d of weeks(9)) { const g = play(db, d); call(db, 'POST', `/api/games/${g.id}/final`); }
   const [gif, sos] = db.settings.teams.map((t) => t.id);
   refused(db, 'POST', '/api/offseason/open', as('ben'), /open free agency early/);
   call(db, 'POST', '/api/offseason/keepers', { teamId: sos, ids: ['max', 'henry'], ...as('paul') });
@@ -171,5 +177,5 @@ test('free agency: admins can act for a team without a coach, open it early, and
   for (const o of offers.slice(0, 7)) call(db, 'POST', `/api/offseason/offers/${o.id}/sign`, as('paul'));
   assert.equal(faState(db, { ovr: E.computeLeague(db).ovr }).teamOf(gif).rosterOpen, 0);
   refused(db, 'POST', `/api/offseason/offers/${offers[7].id}/sign`, as('paul'), /roster is full/);
-  assert.ok(CAP >= 100 && SEASON_GAMES === 4);
+  assert.ok(CAP >= 100 && SEASON_GAMES === 9);
 });

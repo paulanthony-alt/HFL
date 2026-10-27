@@ -1489,3 +1489,13 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .fa-value b { font: 900 24px/1 var(--display); color: var(--gold); letter-spacing: 0; }
 .fa-make { border-left: 4px solid var(--tc); }
 @media (max-width: 380px) { .fa-left b { font-size: 46px; } .fa-steps li { font-size: 9.5px; } }
+
+/* nine-game seasons: Bowl I, Bowl II, Super Bowl */
+.mu-bowl.super { background: linear-gradient(90deg, #6a5200, #fff1a8 50%, #6a5200); letter-spacing: 0.18em; }
+.bowl-champ.super { border-width: 2px; }
+.bowl-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+.bowl-cell { display: grid; gap: 4px; padding: 8px 10px; border-radius: var(--r); background: var(--bg-1); border: 1px solid var(--line); min-width: 0; }
+.bowl-cell.super { border-color: color-mix(in srgb, var(--gold) 50%, transparent); }
+.bowl-cell small { font: 700 10.5px/1 var(--label); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.bowl-cell b { font: 900 italic 17px/1 var(--display); font-synthesis: style; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bowl-cell em { font: 600 13px/1 var(--label); font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
