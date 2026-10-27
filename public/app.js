@@ -11,6 +11,7 @@ import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wr
 import { CastView } from './cast.js';
 import { clockElapsed, formatClock, quarterLabel, isRunning } from './clock.js';
 import { typicalPlays, winProbSeries, biggestSwing, clutchTable, clutchPlays, formOf, teamScouting } from './insights.js';
+import { SEASON_GAMES, CAP, KEEPERS, MIN_DEAL, MAX_DEAL, FRENZY_DAYS, faState, keeperPrice, money, timeLeft } from './offseason.js';
 
 // ---------------------------------------------------------------------------
 // State + helpers
@@ -279,6 +280,8 @@ const ROUTES = [
   [/^#\/settings$/, viewSettings, ''],
   [/^#\/cast$/, viewCast, ''],
   [/^#\/rules$/, viewRules, 'rules'],
+  [/^#\/fa$/, viewFreeAgency, ''],
+  [/^#\/fa\/p\/([\w-]+)$/, viewFaPlayer, ''],
 ];
 
 function render() {
@@ -428,12 +431,12 @@ function bowlChampion(g) {
   const w = gameInfo(g).summary.winner;
   const sb = g.bowlName === 'Super Bowl';
   return `
-    <div class="bowl-champ ${sb ? 'super' : ''}">
+    <${sb ? 'a href="#/fa"' : 'div'} class="bowl-champ ${sb ? 'super' : ''}">
       <span class="bowl-trophy">🏆</span>
       <span class="grow"><span class="kicker gold">${h(bowlTitle(g))} · Season ${h(g.season)}</span>
         <b>${w === 'tie' ? `${h(g.bowlName)} ends in a tie` : sb ? `${h(teamName(g, w))} are HFL champions` : `${h(teamName(g, w))} win ${h(g.bowlName).replace(' ', '&nbsp;')}`}</b>
-        <small>${sb ? 'Champions of the season' : 'Counts 1.5× in the MVP race'}</small></span>
-    </div>`;
+        <small>${sb ? `Offseason: coaches keep ${KEEPERS}, then a week of free agency ›` : 'Counts 1.5× in the MVP race'}</small></span>
+    </${sb ? 'a' : 'div'}>`;
 }
 // Who won this season's Bowls (under the standings).
 function bowlTrophies(season) {
@@ -494,6 +497,7 @@ function renderChrome(tab) {
   if (m) { hydrateImages(); announceUnlocks(m); }
   document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
   renderTicker();
+  faAutoClose();
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +518,7 @@ function renderTicker() {
     const t = (side) => `<span class="tk-team ${w === side ? 'win' : ''}" style="--tc:${h(sideColor(g, side))}">${h(abbr(teamName(g, side)))}</span><b>${summary.score[side]}</b>`;
     return `<a class="tk-item" href="#/g/${g.id}"><em class="${tag === 'Live' ? 'live' : ''}">${tag}</em>${t('A')}${t('B')}</a>`;
   };
+  items.push(...faTickerItems());
   for (const g of games.filter((x) => x.status === 'live')) items.push(score(g, 'Live'));
   const finals = games.filter((x) => x.status === 'final').reverse();
   if (finals[0]) items.push(score(finals[0], 'Final'));
@@ -578,6 +583,7 @@ function matchupHero(g) {
 // Madden-style menu tiles on the home screen.
 const TILE_ICONS = {
   stats: '<path d="M3 20.5h18M6.5 17V11M12 17V5.5M17.5 17V8.5"/>',
+  fa: '<path d="M4 20.5h7"/><path d="M14.5 4.5l5 5L9 20H4v-5z"/><path d="M12.5 6.5l5 5"/>',
   cards: '<rect x="8" y="2.8" width="11.5" height="15.5" rx="2"/><path d="M5 6.8v12.4a2 2 0 0 0 2 2h9"/><path d="M11.5 13.5l2.2-5 2.3 5"/>',
   plays: '<circle cx="6" cy="17.5" r="2.8"/><path d="M15.5 3.5l4.5 4.5M20 3.5L15.5 8"/><path d="M8.6 15.6c3.4-1.4 5.8-4 6.8-7.3" stroke-dasharray="2.2 2.4"/>',
   fame: '<path d="M8 3.5h8v5.5a4 4 0 0 1-8 0z"/><path d="M8 5.5H5a3 3 0 0 0 3.3 4.4M16 5.5h3a3 3 0 0 1-3.3 4.4M12 13v3.5M8.5 20.5h7M9.5 16.5h5v4h-5z"/>',
@@ -603,6 +609,7 @@ function hubTiles() {
     ${sec('League hub')}
     <nav class="tiles" aria-label="League hub">
       ${tile('#/stats', 'stats', 'Leaderboards', mvp && E.mvpScore(mvp[1]) > 0 ? `MVP race: ${h(nick(mvp[0]))} · ${Math.round(E.mvpScore(mvp[1]))} pts` : 'Season stats & standings', { big: true, faces: mvp ? [mvp[0]] : [] })}
+      ${tile('#/fa', 'fa', 'Free agency', faTileSub())}
       ${tile('#/cards', 'cards', 'Player cards', roster.length ? `${roster.length} players · top OVR ${ovr(roster[0])}` : 'Build the roster', { faces: roster.slice(0, 3) })}
       ${tile('#/plays', 'plays', 'Playbook', `${S.db.plays.length} play${S.db.plays.length === 1 ? '' : 's'} drawn up`)}
       ${tile('#/awards', 'awards', 'Awards', potw ? `POTW: ${h(nick(potw.id))}` : 'MVP, POTW & more')}
@@ -769,6 +776,7 @@ function viewHome() {
       const mine = me() && buildWrapped(S.db, S.league, S.awards, me(), ws, { name: nick });
       return `<a class="banner wr-banner" href="${mine ? `#/wrapped/${me()}?s=${encodeURIComponent(ws)}` : `#/wrapped?s=${encodeURIComponent(ws)}`}"><span class="banner-dot"></span><span><b>🎁 Your Season ${h(ws)} Wrapped is here.</b> Your numbers, your nemesis, your best play.</span><span class="banner-go">›</span></a>`;
     })()}
+    ${faHomeBanner()}
     ${current ? gamePanel(current) : `
       <section class="card">${empty({ art: 'field', title: 'No game on the schedule', text: 'Set one up and the crew can start tapping in.', cta: '<a class="btn hot" href="#/new-game">Schedule a game</a>' })}</section>`}
     ${others.length ? sec('Also on the schedule') + others.map((g) => `
@@ -777,7 +785,7 @@ function viewHome() {
         <span class="grow"><b>${g.status === 'live' ? '<span class="chip live">Live</span> ' : ''}${h(fmtDate(g.date, { weekday: 'long' }))}${g.time ? ` · ${h(fmtTime(g.time))}` : ''}</b><span class="muted small">${h(g.location || 'Location TBD')}</span></span>
         <span class="row-meta"><b>${Object.values(g.rsvps).filter((x) => x === 'in').length}</b> in</span>
       </a>`).join('') : ''}
-    ${current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}
+    ${['keepers', 'frenzy'].includes(faNow().phase) ? '<a class="btn hot block" href="#/fa">✍️ Offseason: free agency ›</a>' : current ? `<a class="btn ${current.status === 'final' ? 'hot' : 'ghost'} block" href="#/new-game">+ Schedule ${current.status === 'final' ? 'the next' : 'another'} game</a>` : ''}
     ${hubTiles()}`;
 
   const rest = finals.filter((g) => g !== current);
@@ -1482,6 +1490,7 @@ function viewNewGame() {
     <a class="back" href="#/">‹ Games</a>
     <section class="card">
       <h2>Schedule a game</h2>
+      ${['keepers', 'frenzy'].includes(faNow().phase) ? '<a class="banner fa-banner" href="#/fa"><span class="banner-dot"></span><span><b>The season\'s over.</b> The next game comes after free agency.</span><span class="banner-go">›</span></a>' : ''}
       ${S.db.settings.nextBowl ? `<p class="fa-week bowl">🏆 This game will be <b>HFL ${h(S.db.settings.nextBowl)}</b>.</p>` : ''}
       <form data-f="game" class="form">
         <div class="form-row">
@@ -1496,6 +1505,283 @@ function viewNewGame() {
         <button class="btn hot block">Put it on the schedule</button>
       </form>
     </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Free agency: after the Super Bowl, keepers, then a week of offers (see offseason.js)
+
+const faNow = () => faState(S.db, { ovr: S.league.ovr });
+// Teams this phone runs in free agency: the one he coaches (PIN-unlocked), or both for an admin.
+const myFaTeams = (st) => st.teams.filter((t) => iAmCommish() || (me() && t.coachId === me() && pinOk(me())));
+const teamChip = (t) => `<span class="fa-team" style="--tc:${h(t?.color || '#888')}">${h(t?.name || '?')}</span>`;
+const faTeamById = (id) => seasonTeams(S.db).find((t) => t.id === id);
+const countdown = (st) => `<b data-countdown="${h(st.endsAt)}">${timeLeft(st.msLeft)}</b>`;
+
+// The week is up: whichever phone notices first closes it and starts the next season.
+function faAutoClose() {
+  if (faAutoClose.busy || !S.db?.settings?.offseason || !faNow().over) return;
+  faAutoClose.busy = true;
+  api('POST', '/api/offseason/close', {})
+    .then((r) => toast(`🏁 Free agency is over. Season ${r?.season || ''} starts now`))
+    .catch(() => {})
+    .finally(() => { faAutoClose.busy = false; });
+}
+// Tick the free agency clocks without re-rendering (forms keep what's typed).
+setInterval(() => {
+  if (!S.db) return;
+  document.querySelectorAll('[data-countdown]').forEach((el) => { el.textContent = timeLeft(Date.parse(el.dataset.countdown) - Date.now()); });
+  faAutoClose();
+}, 15000);
+
+function faTileSub() {
+  const st = faNow();
+  if (st.phase === 'keepers') return 'Coaches are picking keepers';
+  if (st.phase === 'frenzy') return `Frenzy · ${timeLeft(st.msLeft)} left`;
+  if (st.phase === 'closed' && !S.db.games.some((g) => g.season === S.db.settings.season)) return `Season ${h(S.db.settings.season)} rosters set`;
+  const sb = S.db.games.find((g) => g.bowlName === 'Super Bowl' && String(g.season) === String(S.db.settings.season));
+  return sb ? `Opens after the Super Bowl (${h(fmtDate(sb.date, { month: 'short', day: 'numeric' }))})` : 'Opens after the Super Bowl';
+}
+
+function faTickerItems() {
+  const st = faNow();
+  const out = [];
+  if (st.phase === 'season') return out;
+  if (st.bowl?.status === 'final') {
+    const w = gameInfo(st.bowl).summary.winner;
+    if (w && w !== 'tie' && st.phase !== 'closed') out.push(`<a class="tk-item" href="#/g/${st.bowl.id}"><em>🏆 HFL champs</em><span class="tk-team win" style="--tc:${h(sideColor(st.bowl, w))}">${h(teamName(st.bowl, w))}</span></a>`);
+  }
+  if (st.phase === 'keepers') out.push('<a class="tk-item" href="#/fa"><em>Offseason</em><span>Coaches are picking keepers</span></a>');
+  if (st.phase === 'frenzy') out.push(`<a class="tk-item" href="#/fa"><em class="live">Free agency</em><b>${timeLeft(st.msLeft)} left</b><span class="muted">${st.freeAgents.length} available</span></a>`);
+  for (const s of [...st.signings].reverse().slice(0, 4)) {
+    const t = faTeamById(s.teamId);
+    out.push(`<a class="tk-item" href="#/fa"><em>Signed</em><span>${h(nick(s.playerId))}</span><span class="tk-team" style="--tc:${h(t?.color || '#888')}">${h(abbr(t?.name))}</span><b>${money(s.amount)}</b></a>`);
+  }
+  return out;
+}
+
+function faHomeBanner() {
+  const st = faNow();
+  const b = (text, sub) => `<a class="banner fa-banner" href="#/fa"><span class="banner-dot"></span><span><b>${text}</b> ${sub}</span><span class="banner-go">›</span></a>`;
+  if (st.phase === 'keepers') return b('🏆 The season is over.', `Coaches are keeping ${KEEPERS} players each, then free agency opens for a week.`);
+  if (st.phase === 'frenzy') return b(`✍️ Free agency frenzy: ${countdown(st)} left.`, `${st.signings.length} signed, ${st.freeAgents.length} still on the market.`);
+  if (st.phase === 'closed' && !S.db.games.some((g) => g.season === S.db.settings.season)) return b(`🏁 Season ${h(S.db.settings.season)} rosters are set.`, 'See who signed where.');
+  return '';
+}
+
+const FA_STEPS = [['bowl', 'Super Bowl'], ['keepers', 'Keepers'], ['frenzy', 'Free agency'], ['closed', 'New season']];
+function faSteps(phase) {
+  const at = FA_STEPS.findIndex(([k]) => k === phase);
+  return `<ol class="fa-steps">${FA_STEPS.map(([, label], i) => `<li class="${i < at ? 'done' : i === at ? 'on' : ''}"><span>${i < at ? '✓' : i + 1}</span>${label}</li>`).join('')}</ol>`;
+}
+
+function faHowItWorks(open = false) {
+  return `
+    <details class="card-lite fa-how" ${open ? 'open' : ''}><summary>How it works</summary>
+      <ol class="fa-rules">
+        <li>Every season is <b>${SEASON_GAMES} games</b>: <b>Bowl I</b> (game 4), <b>Bowl II</b> (game 8) and <b>the HFL Super Bowl</b> (game ${SEASON_GAMES}). League admins mark the Bowl games.</li>
+        <li>After the Super Bowl, each coach can <b>keep ${KEEPERS} players</b>. A keeper costs his market value plus 20% (like a franchise tag).</li>
+        <li>Then a <b>${FRENZY_DAYS}-day free agency frenzy</b>. Every team has the same <b>${money(CAP)} salary cap</b> and room for <b>${faNow().rosterMax} players</b> including the coach.</li>
+        <li>Coaches tap a free agent and <b>offer a contract</b> (${money(MIN_DEAL)} to ${money(MAX_DEAL)}) for <b>1 season, all ${SEASON_GAMES} games</b>. They can raise or pull it any time.</li>
+        <li>Players see their offers and tap <b>Sign contract</b> on the one they want. The other offers are off the table. A signing has to fit under the cap when he signs.</li>
+        <li>When the week is up the new season starts. Anyone who didn't sign stays a free agent and can still play.</li>
+      </ol>
+      <p class="muted small">The money is fake. Market value is based on OVR: an average player in the crew is worth about ${money(14)}.</p>
+    </details>`;
+}
+
+function faCapTable(st) {
+  const role = (t, pid) => (pid === t.coachId ? '<em class="fa-role">C</em>' : t.kept.some((k) => k.id === pid) ? '<em class="fa-role k">K</em>' : '<em class="fa-role s">✍</em>');
+  return `
+    <section class="card fa-cap">
+      ${sec('Salary cap', `<span class="sec-link muted">${money(CAP)} each · ${st.rosterMax} max</span>`)}
+      ${st.teams.map((t) => `
+        <div class="fa-capteam" style="--tc:${h(t.color || '#888')}">
+          <div class="row-between"><b class="fa-tname">${h(t.name)}</b><span class="muted small">${t.coachId ? `Coach ${h(firstName(t.coachId))}` : 'No coach: admins run it'}</span></div>
+          <div class="fa-capbar"><i style="width:${Math.min(100, (t.capUsed / CAP) * 100)}%"></i></div>
+          <div class="fa-capline"><span><b>${money(t.capUsed)}</b> spent</span><span><b>${money(t.capSpace)}</b> left</span><span><b>${t.roster.length}</b>/${st.rosterMax} players</span></div>
+          ${t.roster.length ? `<div class="chips">${t.roster.map((pid) => `<a class="pchip" href="#/fa/p/${pid}">${avatar(pid, 'xs')} ${h(nick(pid))} ${role(t, pid)}</a>`).join('')}</div>` : ''}
+        </div>`).join('')}
+      <p class="muted small fa-legend"><em class="fa-role">C</em> coach <em class="fa-role k">K</em> keeper <em class="fa-role s">✍</em> signed</p>
+    </section>`;
+}
+
+function faKeepers(st) {
+  const mine = myFaTeams(st);
+  return `
+    <section class="card">
+      ${sec(`Keepers`, `<span class="sec-link muted">up to ${KEEPERS} per team</span>`)}
+      ${st.teams.map((t) => {
+        const picked = new Set(t.kept.map((k) => k.id));
+        if (!mine.includes(t)) {
+          return `<div class="fa-keepstatus">${teamChip(t)} ${t.locked ? `<b>🔒 Locked:</b> ${t.kept.map((k) => h(nick(k.id))).join(', ') || 'nobody'}` : `<span class="muted">${t.coachId ? `Coach ${h(firstName(t.coachId))} is picking…` : 'Waiting on a league admin…'}</span>`}</div>`;
+        }
+        const list = [...t.eligibleKeepers].sort((x, y) => ovr(y) - ovr(x));
+        return `
+          <div class="fa-keep" data-team="${t.id}">
+            <div class="row-between">${teamChip(t)}<span class="muted small">${t.locked ? '🔒 Locked in. You can still change them until free agency opens.' : 'Pick up to two, then lock them in'}</span></div>
+            ${list.map((pid) => `
+              <label class="fa-keeprow">
+                <input type="checkbox" value="${pid}" data-keep-team="${t.id}" data-ch="fa-keep" ${picked.has(pid) ? 'checked' : ''} ${!picked.has(pid) && picked.size >= KEEPERS ? 'disabled' : ''}>
+                ${avatar(pid, 'xs')}<span class="grow"><b>${h(nick(pid))}</b> <span class="muted small">${h(P(pid).position || 'ATH')}</span></span>
+                <b class="g-${grade(ovr(pid))}">${ovr(pid)}</b><span class="fa-money">${money(keeperPrice(st.value(pid)))}</span>
+              </label>`).join('')}
+            <div class="btn-row">
+              <button class="btn ghost" data-a="fa-keepers" data-team="${t.id}" data-lock="">Save picks</button>
+              <button class="btn hot grow" data-a="fa-keepers" data-team="${t.id}" data-lock="1">🔒 Lock in keepers</button>
+            </div>
+          </div>`;
+      }).join('')}
+      <p class="muted small">Free agency opens as soon as both coaches lock in.</p>
+      ${iAmCommish() ? '<button class="btn ghost block" data-a="fa-open">Open free agency now (admin)</button>' : ''}
+    </section>`;
+}
+
+function faMyOffers(st) {
+  const m = me();
+  if (!m) return '';
+  const signed = st.signedTo.get(m);
+  if (signed) return `<section class="card fa-mine signed">✍️ <b>You signed with ${h(faTeamById(signed.teamId)?.name)}</b>: 1 season (${SEASON_GAMES} games), ${money(signed.amount)}.</section>`;
+  const kept = st.keptBy.get(m);
+  if (kept) return `<section class="card fa-mine signed">🔒 <b>${h(faTeamById(kept.teamId)?.name)} kept you</b>: 1 season, ${money(kept.amount)}.</section>`;
+  if (!st.isFreeAgent(m)) return '';
+  const offers = st.offersFor(m);
+  return `
+    <section class="card fa-mine">
+      ${sec('Your offers', `<span class="sec-link muted">you're a free agent</span>`)}
+      ${offers.length ? offers.sort((x, y) => y.amount - x.amount).map((o) => {
+        const t = st.teamOf(o.teamId);
+        return `
+          <div class="fa-offer">
+            ${teamChip(t)}<span class="grow"><b class="fa-amt">${money(o.amount)}</b><span class="muted small">1 season · ${SEASON_GAMES} games${t?.coachId ? ` · Coach ${h(firstName(t.coachId))}` : ''}</span></span>
+            <button class="btn sm ghost" data-a="fa-decline" data-o="${o.id}">Decline</button>
+            <button class="btn sm hot" data-a="fa-sign" data-o="${o.id}">Sign contract</button>
+          </div>`;
+      }).join('') : `<div class="empty-inline">${ART.whistle}<span>No offers yet. Coaches see you on the board. Your market value: <b>${money(st.value(m))}</b>.</span></div>`}
+      ${hasPin(m) ? '' : `<p class="muted small">🔒 <a href="#/unlock/${m}">Set your PIN</a> so you (and only you) can sign.</p>`}
+    </section>`;
+}
+
+function faBoard(st) {
+  const mine = myFaTeams(st);
+  const rows = [...st.freeAgents].sort((x, y) => ovr(y) - ovr(x));
+  return `
+    ${sec(`On the market (${rows.length})`, mine.length ? '<span class="sec-link muted">tap a player to offer</span>' : '')}
+    <div class="fa-board">${rows.map((pid) => {
+      const offers = st.offersFor(pid);
+      const myOffer = offers.find((o) => mine.some((t) => t.id === o.teamId));
+      return `
+        <a class="fa-row" href="#/fa/p/${pid}">
+          ${avatar(pid, 'xs')}<span class="grow"><b>${h(nick(pid))}</b><span class="muted small">${h(P(pid).position || 'ATH')} · value ${money(st.value(pid))}</span></span>
+          <span class="fa-interest">${offers.length > 1 ? `🔥 ${offers.length} teams` : offers.length ? '1 offer' : ''}</span>
+          ${myOffer ? `<span class="fa-money mine">${money(myOffer.amount)}</span>` : ''}
+          <b class="fa-ovr g-${grade(ovr(pid))}">${ovr(pid)}</b>
+        </a>`;
+    }).join('') || '<p class="muted">Everybody has signed.</p>'}</div>`;
+}
+
+function faWire(st) {
+  const items = [...(st.os?.feed || [])].reverse().slice(0, 40);
+  if (!items.length) return '';
+  const tn = (id) => teamChip(faTeamById(id));
+  const line = (f) => {
+    if (f.kind === 'bowl') { const g = S.db.games.find((x) => x.id === f.gameId); const w = g && gameInfo(g).summary.winner; return g ? `🏆 <b>${w === 'tie' ? 'The Super Bowl ends in a tie' : `${h(teamName(g, w))} win the HFL Super Bowl`}</b>, ${gameInfo(g).summary.score.A}–${gameInfo(g).summary.score.B}. The offseason is on.` : '🏆 The Super Bowl is over.'; }
+    if (f.kind === 'keepers') return `🔒 ${tn(f.teamId)} keep ${f.ids.length ? f.ids.map((x) => `<b>${h(nick(x))}</b>`).join(' and ') : 'nobody'}.`;
+    if (f.kind === 'open') return `🚨 <b>Free agency is open.</b> ${FRENZY_DAYS} days. Coaches, go.`;
+    if (f.kind === 'offer') return `👀 ${tn(f.teamId)} made an offer to <b>${h(nick(f.playerId))}</b>.`;
+    if (f.kind === 'sign') return `✍️ <b>BREAKING:</b> ${h(nick(f.playerId))} signs with ${tn(f.teamId)}: 1 season, <b>${money(f.amount)}</b>.${f.passedOn?.length ? ` Turned down ${f.passedOn.map(tn).join(' and ')}.` : ''}`;
+    if (f.kind === 'close') return `🏁 <b>Free agency is closed.</b> Season ${h(f.season)} starts now.${f.unsigned?.length ? ` Still unsigned: ${f.unsigned.map((x) => h(nick(x))).join(', ')}.` : ''}`;
+    return '';
+  };
+  return `
+    <section class="card fa-wire">
+      ${sec('The wire')}
+      <ul>${items.map((f) => `<li><span>${line(f)}</span><time class="muted small">${h(ago(f.at))}</time></li>`).join('')}</ul>
+    </section>`;
+}
+
+function viewFreeAgency() {
+  const st = faNow();
+  if (seasonTeams(S.db).length !== 2) return `${pageHead('Offseason', 'Free agency')}<section class="card">${empty({ art: 'trophy', title: 'Set up season teams first', text: 'Free agency runs between two season teams. League admins set them in Settings.' })}</section>`;
+  if (st.phase === 'season') {
+    return `
+      ${pageHead(`Season ${h(st.season)}`, 'Free agency')}
+      <section class="card">${empty({ art: 'trophy', title: 'Opens after the Super Bowl', text: `Every season ends with the HFL Super Bowl. ${(() => { const sb = S.db.games.find((g) => g.bowlName === 'Super Bowl' && String(g.season) === String(st.season)); return sb ? `This season's is ${h(fmtDate(sb.date, { weekday: 'long', month: 'short', day: 'numeric' }))}.` : 'League admins mark which game it is (Edit game).'; })()} When its final whistle blows, coaches keep ${KEEPERS} players and free agency opens for a week.` })}</section>
+      ${standingsCard(st.season)}
+      ${faHowItWorks(true)}`;
+  }
+  const bowl = st.bowl;
+  const w = bowl && gameInfo(bowl).summary.winner;
+  const mine = myFaTeams(st);
+  const meCoach = me() && st.teams.find((t) => t.coachId === me());
+  return `
+    ${pageHead(`Season ${h(st.os.season)} offseason`, 'Free agency', bowl && w && w !== 'tie' ? `<span class="fa-champ">🏆 ${h(teamName(bowl, w))}</span>` : '')}
+    ${faSteps(st.phase)}
+    ${meCoach && !mine.length ? `<a class="banner" href="#/unlock/${me()}"><span class="banner-dot"></span><span><b>Coach, enter your PIN</b> to pick keepers and make offers.</span><span class="banner-go">›</span></a>` : ''}
+    ${st.phase === 'frenzy' ? `
+      <section class="card fa-clock">
+        <div class="kicker">Free agency frenzy</div>
+        <div class="fa-left">${countdown(st)}<span>left</span></div>
+        <div class="muted small">Ends ${h(new Date(st.endsAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))} · ${st.signings.length} signed · ${st.freeAgents.length} on the market</div>
+      </section>
+      ${faMyOffers(st)}` : ''}
+    ${st.phase === 'keepers' ? faKeepers(st) : ''}
+    ${faCapTable(st)}
+    ${st.phase === 'frenzy' ? `${faBoard(st)}${iAmCommish() ? '<button class="btn ghost block" data-a="fa-close">Close free agency now (admin)</button>' : ''}` : ''}
+    ${st.phase === 'closed' ? `<section class="card">${empty({ art: 'trophy', title: `Season ${h(S.db.settings.season)} is set`, text: `Rosters above are the new season teams. ${st.os.feed?.at(-1)?.unsigned?.length ? 'Anyone who didn\'t sign is a free agent and can still play.' : ''}`, cta: '<a class="btn hot" href="#/new-game">Schedule week 1</a>' })}</section>` : ''}
+    ${faWire(st)}
+    ${faHowItWorks()}`;
+}
+
+function viewFaPlayer(pid) {
+  const st = faNow();
+  const p = S.db.players.find((x) => x.id === pid);
+  if (!p) return `<p class="muted">Player not found. <a href="#/fa">Back</a></p>`;
+  const mine = myFaTeams(st);
+  const kept = st.keptBy.get(pid), signed = st.signedTo.get(pid), coach = st.teams.find((t) => t.coachId === pid);
+  const status = coach ? `📋 Coach of ${h(coach.name)}` : kept ? `🔒 Kept by ${h(faTeamById(kept.teamId)?.name)} · ${money(kept.amount)}` : signed ? `✍️ Signed with ${h(faTeamById(signed.teamId)?.name)} · ${money(signed.amount)}` : st.phase === 'season' ? 'Under contract this season' : 'Free agent';
+  const offers = st.offersFor(pid);
+  const canSee = (o) => iAmCommish() || me() === pid || mine.some((t) => t.id === o.teamId);
+  const isMe = me() === pid && st.isFreeAgent(pid) && st.phase === 'frenzy';
+  return `
+    <a class="back" href="#/fa">‹ Free agency</a>
+    <section class="card fa-player">
+      <div class="fa-phead">
+        ${avatar(pid, 'lg')}
+        <div class="grow"><h2>${h(p.name)}</h2><div class="muted small">${h(p.nickname || '')}${p.nickname ? ' · ' : ''}${h(p.position || 'ATH')}${bioLine(p) ? ` · ${h(bioLine(p))}` : ''}</div><div class="fa-status">${status}</div></div>
+        <div class="fa-big"><b class="g-${grade(ovr(pid))}">${ovr(pid)}</b><small>OVR</small></div>
+      </div>
+      <div class="fa-value"><span>Market value</span><b>${money(st.value(pid))}</b><span class="muted small">keeper tag ${money(keeperPrice(st.value(pid)))}</span></div>
+      <div class="tc-attrs">${E.keyAttrs(p.position || 'ATH', 6).map((k) => attrBar(k, attrsOf(pid)[k], null, { label: true })).join('')}</div>
+      <a class="sec-link" href="#/p/${pid}">Full player page ›</a>
+    </section>
+    ${st.phase === 'frenzy' && st.isFreeAgent(pid) ? `
+      <section class="card">
+        ${sec('Offers on the table', `<span class="sec-link muted">${offers.length || 'none yet'}</span>`)}
+        ${offers.map((o) => {
+          const t = st.teamOf(o.teamId);
+          return `<div class="fa-offer">${teamChip(t)}<span class="grow">${canSee(o) ? `<b class="fa-amt">${money(o.amount)}</b>` : '<span class="muted">Offer made (amount private)</span>'}</span>
+            ${isMe ? `<button class="btn sm ghost" data-a="fa-decline" data-o="${o.id}">Decline</button><button class="btn sm hot" data-a="fa-sign" data-o="${o.id}">Sign contract</button>` : ''}</div>`;
+        }).join('') || '<p class="muted small">Nobody has made an offer yet.</p>'}
+      </section>
+      ${mine.map((t) => {
+        const o = offers.find((x) => x.teamId === t.id);
+        const max = Math.max(0, Math.min(MAX_DEAL, t.capSpace));
+        return `
+          <section class="card fa-make" style="--tc:${h(t.color || '#888')}">
+            ${sec(`${h(t.name)}: ${o ? 'your offer' : 'make an offer'}`)}
+            ${t.rosterOpen <= 0 ? `<p class="muted">${h(t.name)}'s roster is full (${st.rosterMax}).</p>` : max < MIN_DEAL ? `<p class="muted">${h(t.name)} is out of cap space.</p>` : `
+            <form data-f="fa-offer" data-team="${t.id}" data-player="${pid}" class="form">
+              <label>Contract (1 season, $M)
+                <input name="amount" type="number" inputmode="decimal" min="${MIN_DEAL}" max="${max}" step="0.5" required value="${o ? o.amount : Math.min(max, st.value(pid))}">
+              </label>
+              <p class="muted small">Value ${money(st.value(pid))} · ${h(t.name)} has ${money(t.capSpace)} of cap space and ${t.rosterOpen} roster spot${t.rosterOpen === 1 ? '' : 's'} left.</p>
+              <div class="btn-row">
+                ${o ? `<button type="button" class="btn ghost" data-a="fa-withdraw" data-o="${o.id}">Pull offer</button>` : ''}
+                <button class="btn hot grow">${o ? 'Update offer' : 'Offer contract'}</button>
+              </div>
+            </form>`}
+          </section>`;
+      }).join('')}` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1614,6 +1900,8 @@ function badges(id) {
   const out = [];
   const coaching = coachOf(S.db, id);
   if (coaching) out.push(`📋 ${coaching.name} Coach`);
+  const deal = (S.db.settings.contracts || []).find((c) => c.playerId === id && c.season === S.db.settings.season);
+  if (deal) out.push(`✍️ ${seasonTeams(S.db).find((t) => t.id === deal.teamId)?.name || 'Signed'} · ${money(deal.amount)}${deal.kind === 'keeper' ? ' (kept)' : ''}`);
   out.push(...bowlBadges(id));
   if (c.mvps) out.push(`👑 ${c.mvps}× MVP`);
   if (S.db.fame.some((f) => f.category === 'best' && f.playerIds.includes(id))) out.push('🏛️ Hall of Famer');
@@ -2972,6 +3260,22 @@ const A = {
     if (!game || game.teams.A.includes(p) || game.teams.B.includes(p)) return;
     run(() => api('PUT', `/api/games/${g}/teams`, { teams: { ...game.teams, [side]: [...game.teams[side], p] } }), `${nick(p)} is in for ${teamName(game, side)}`);
   },
+  'fa-keepers': ({ team, lock }) => {
+    const ids = [...document.querySelectorAll(`[data-keep-team="${team}"]:checked`)].map((x) => x.value);
+    if (lock && !confirm(ids.length ? `Keep ${ids.map((x) => nick(x)).join(' and ')}? Their keeper tags go on your cap.` : 'Keep nobody? Everyone goes to free agency.')) return;
+    run(() => api('POST', '/api/offseason/keepers', { teamId: team, ids, lock: !!lock }), lock ? '🔒 Keepers locked in' : 'Picks saved');
+  },
+  'fa-open': () => { if (confirm('Open free agency now? Coaches who haven\'t locked in keep whoever they picked.')) run(() => api('POST', '/api/offseason/open', {}), '🚨 Free agency is open'); },
+  'fa-close': () => { if (confirm('Close free agency now and start the new season? Unsigned players stay free agents.')) run(() => api('POST', '/api/offseason/close', {}), '🏁 Free agency closed. New season!'); },
+  'fa-sign': ({ o }) => {
+    const st = faNow();
+    const off = st.offers.find((x) => x.id === o);
+    const t = off && st.teamOf(off.teamId);
+    if (!off || !confirm(`Sign with ${t.name}: 1 season (${SEASON_GAMES} games), ${money(off.amount)}? Your other offers go away.`)) return;
+    run(() => api('POST', `/api/offseason/offers/${o}/sign`, {}), `✍️ You signed with ${t.name}`);
+  },
+  'fa-decline': ({ o }) => { if (confirm('Turn down this offer?')) run(() => api('POST', `/api/offseason/offers/${o}/decline`, {}), 'Offer turned down'); },
+  'fa-withdraw': ({ o }) => run(() => api('DELETE', `/api/offseason/offers/${o}`, {}), 'Offer pulled'),
   'rename-team': ({ g, side }) => {
     const game = S.db.games.find((x) => x.id === g);
     const name = prompt('Team name', teamName(game, side));
@@ -3093,6 +3397,12 @@ function submitLog({ p1, p2 }) {
 }
 
 const CHANGE = {
+  // keepers: once two are picked, the rest can't be checked
+  'fa-keep': (el) => {
+    const box = el.closest('.fa-keep');
+    const n = box.querySelectorAll('input[type=checkbox]:checked').length;
+    box.querySelectorAll('input[type=checkbox]:not(:checked)').forEach((x) => { x.disabled = n >= KEEPERS; });
+  },
   rate: (el) => refreshRateRow(el.closest('.rate-row')),
   'rate-pos': (el) => refreshRateRow(el.closest('.rate-row')),
   'rate-bio': (el) => refreshRateRow(el.closest('.rate-row')),
@@ -3143,6 +3453,7 @@ const FORMS = {
     toast(form.dataset.claimed ? `Unlocked. What's up, ${nick(id)} 👊` : `🔒 ${P(id).name} is yours. Don't forget your PIN`);
     location.hash = P(id).nickname ? '#/' : '#/nickname';
   },
+  'fa-offer': (d, form) => run(() => api('POST', '/api/offseason/offers', { teamId: form.dataset.team, playerId: form.dataset.player, amount: Number(d.amount) }), '📝 Offer sent'),
   'season-teams': (d) => {
     const teams = seasonTeams(S.db).map((t, i) => ({ id: t.id, name: d[`name${i}`], color: d[`color${i}`], coachId: d[`coach${i}`] || null, players: [] }));
     if (teams[0].coachId && teams[0].coachId === teams[1].coachId) return toast('One coach per team: pick someone else for the other team', true);

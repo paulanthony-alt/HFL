@@ -58,7 +58,7 @@ export function faState(db, { ovr = {}, at = new Date().toISOString() } = {}) {
   const coachIds = new Set(teams.map((t) => t.coachId).filter((id) => id && activeSet.has(id)));
   const season = db.settings?.season;
   // the Super Bowl that ended the season (or this season's, before it's played)
-  const bowl = (db.games || []).find((g) => g.superBowl && String(g.season) === String(os?.season ?? season)) || null;
+  const bowl = (db.games || []).find((g) => (g.bowlName === 'Super Bowl' || g.superBowl) && String(g.season) === String(os?.season ?? season)) || null;
   const phase = os ? os.phase : 'season';
   const crewAvg = active.length ? active.reduce((t, id) => t + (ovr[id] ?? 70), 0) / active.length : 70;
   const value = (pid) => marketValue(ovr[pid] ?? 70, crewAvg);

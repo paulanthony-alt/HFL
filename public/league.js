@@ -5,6 +5,7 @@ import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
 import { applyClock, CLOCK_ACTIONS } from './clock.js';
 import { sha256hex } from './sha256.js';
+import { KEEPERS, faState, dealProblem, keeperPrice, frenzyEnd, nextSeasonName, roundHalf } from './offseason.js';
 
 const REACTIONS = ['🔥', '😂', '💀', '🧂', '🗑️'];
 
@@ -564,6 +565,13 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
       g.teamIds = { A: st[0].id, B: st[1].id };
       g.teamNames = { A: st[0].name, B: st[1].name };
     }
+    // keepers and free agency come first; the next season's games after that
+    const os = db.settings.offseason;
+    if (os && (os.phase === 'keepers' || os.phase === 'frenzy')) {
+      throw bad(os.phase === 'keepers'
+        ? "The season's over: coaches are picking keepers, then it's free agency. The next game comes after that."
+        : "It's free agency. The next season's first game comes after it closes.");
+    }
     if (db.settings.nextBowl) setBowl(db, g, db.settings.nextBowl);
     db.games.push(g);
     return g;
@@ -663,7 +671,126 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if (g.status !== 'live') throw bad('game is not live');
     g.status = 'final';
     g.endedAt = now();
+    // The Super Bowl is over: the offseason starts (once per season).
+    const os = db.settings.offseason;
+    if (g.bowlName === 'Super Bowl' && !(os && String(os.season) === String(g.season))) {
+      db.settings.offseason = { season: g.season, bowlId: g.id, phase: 'keepers', startedAt: now(), keepers: {}, offers: [], signings: [], feed: [{ at: now(), kind: 'bowl', gameId: g.id }] };
+    }
     return g;
+  });
+
+  // --- offseason: keepers and free agency (see offseason.js)
+  const offseason = (db, ...phases) => {
+    const os = db.settings.offseason;
+    if (!os) throw bad('Free agency opens after the Super Bowl');
+    if (phases.length && !phases.includes(os.phase)) {
+      throw bad({ keepers: 'Coaches are still picking keepers', frenzy: 'Free agency is open: keepers are locked', closed: 'Free agency is over' }[os.phase] || 'Not right now');
+    }
+    return os;
+  };
+  const fa = (db) => faState(db, { ovr: computeLeague(db).ovr, at: now() });
+  const feed = (os, item) => { os.feed = [...(os.feed || []), { at: now(), ...item }].slice(-300); };
+  // A team's coach (with his PIN), or a league admin.
+  const requireCoach = (db, b, teamId) => {
+    const t = (db.settings.teams || []).find((x) => x.id === teamId);
+    if (!t) throw bad('unknown team');
+    const who = whoIsAsking(db, b);
+    if (isCommish(db, who) || (who && seasonCoach(db, t) === who)) return t;
+    throw forbidden(who ? `Only ${t.name}'s coach (or a league admin) can do that` : 'Pick yourself and enter your PIN first');
+  };
+  const openFrenzy = (os) => {
+    os.phase = 'frenzy';
+    os.opensAt = now();
+    os.endsAt = frenzyEnd(os.opensAt);
+    feed(os, { kind: 'open' });
+  };
+  // Coach keeps up to KEEPERS players; lock: true means he's done. Both locked: free agency opens.
+  on('POST', '/api/offseason/keepers', (db, b) => {
+    const os = offseason(db, 'keepers');
+    const t = requireCoach(db, b, b.teamId);
+    const st = fa(db);
+    const team = st.teamOf(t.id);
+    const ids = [...new Set(Array.isArray(b.ids) ? b.ids : [])];
+    if (ids.length > KEEPERS) throw bad(`Keep up to ${KEEPERS} players`);
+    for (const pid of ids) if (!team.eligibleKeepers.includes(pid)) throw bad(`${db.players.find((p) => p.id === pid)?.name || 'That player'} isn't on ${t.name}`);
+    os.keepers = { ...(os.keepers || {}), [t.id]: { players: ids.map((id) => ({ id, amount: keeperPrice(st.value(id)) })), locked: !!b.lock, at: now() } };
+    if (b.lock) feed(os, { kind: 'keepers', teamId: t.id, ids });
+    if (st.teams.every((x) => os.keepers[x.id]?.locked)) openFrenzy(os);
+    return os;
+  });
+  on('POST', '/api/offseason/open', (db, b) => {
+    requireCommish(db, b, 'open free agency early');
+    const os = offseason(db, 'keepers');
+    openFrenzy(os);
+    return os;
+  });
+  // Offer (or change an offer): one per team per player. Amounts are in $M.
+  on('POST', '/api/offseason/offers', (db, b) => {
+    const os = offseason(db, 'frenzy');
+    const t = requireCoach(db, b, b.teamId);
+    const amount = roundHalf(Number(b.amount));
+    if (!Number.isFinite(amount)) throw bad('How much? (in $M)');
+    const st = fa(db);
+    const problem = dealProblem(st, t.id, b.playerId, amount);
+    if (problem) throw bad(problem);
+    const mine = (os.offers || []).find((o) => o.teamId === t.id && o.playerId === b.playerId);
+    if (mine) Object.assign(mine, { amount, at: now() });
+    else {
+      os.offers = [...(os.offers || []), { id: newId(), teamId: t.id, playerId: b.playerId, amount, at: now(), by: whoIsAsking(db, b) }];
+      feed(os, { kind: 'offer', teamId: t.id, playerId: b.playerId });
+    }
+    return mine || os.offers.at(-1);
+  });
+  const offerOf = (os, oid) => {
+    const o = (os.offers || []).find((x) => x.id === oid);
+    if (!o) throw bad('That offer is gone (withdrawn, or he signed somewhere)');
+    return o;
+  };
+  on('DELETE', '/api/offseason/offers/:oid', (db, b, { oid }) => {
+    const os = offseason(db, 'frenzy');
+    const o = offerOf(os, oid);
+    requireCoach(db, b, o.teamId);
+    os.offers = os.offers.filter((x) => x.id !== oid);
+  });
+  // The player picks a contract. 1 season, the amount offered.
+  on('POST', '/api/offseason/offers/:oid/sign', (db, b, { oid }) => {
+    const os = offseason(db, 'frenzy');
+    const o = offerOf(os, oid);
+    requireSelfOrCommish(db, b, o.playerId, 'sign this contract');
+    const problem = dealProblem(fa(db), o.teamId, o.playerId, o.amount);
+    if (problem) throw bad(problem);
+    const others = os.offers.filter((x) => x.playerId === o.playerId && x.id !== oid);
+    os.signings = [...(os.signings || []), { playerId: o.playerId, teamId: o.teamId, amount: o.amount, at: now() }];
+    os.offers = os.offers.filter((x) => x.playerId !== o.playerId);
+    feed(os, { kind: 'sign', teamId: o.teamId, playerId: o.playerId, amount: o.amount, passedOn: others.map((x) => x.teamId) });
+    return os.signings.at(-1);
+  });
+  on('POST', '/api/offseason/offers/:oid/decline', (db, b, { oid }) => {
+    const os = offseason(db, 'frenzy');
+    const o = offerOf(os, oid);
+    requireSelfOrCommish(db, b, o.playerId, 'turn down this offer');
+    os.offers = os.offers.filter((x) => x.id !== oid);
+  });
+  // The week is up (anyone's phone can do this once the clock runs out), or an admin closes it
+  // early: next season starts with coach + keepers + signings. Unsigned players are free agents.
+  on('POST', '/api/offseason/close', (db, b) => {
+    const os = offseason(db, 'frenzy');
+    const st = fa(db);
+    if (!st.over) requireCommish(db, b, 'close free agency early');
+    const next = nextSeasonName(os.season);
+    db.settings.teams = (db.settings.teams || []).map((t) => ({ ...t, season: next, players: st.teamOf(t.id)?.roster || t.players }));
+    db.settings.contracts = [...(db.settings.contracts || []),
+      ...st.teams.flatMap((t) => [
+        ...t.kept.map((k) => ({ playerId: k.id, teamId: t.id, amount: k.amount, kind: 'keeper', season: next })),
+        ...t.signed.map((s) => ({ playerId: s.playerId, teamId: t.id, amount: s.amount, kind: 'signed', season: next })),
+      ])];
+    db.settings.season = next;
+    os.phase = 'closed';
+    os.closedAt = now();
+    os.nextSeason = next;
+    os.offers = [];
+    feed(os, { kind: 'close', season: next, unsigned: st.freeAgents });
+    return { season: next };
   });
   on('POST', '/api/games/:id/reopen', (db, b, { id }) => {
     const g = game(db, id);
