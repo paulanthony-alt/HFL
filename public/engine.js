@@ -139,6 +139,30 @@ export function impactOf(s) {
   );
 }
 
+// Bowl games: a game can be marked Bowl I, Bowl II or the Super Bowl (game.bowlName). They
+// count more in the MVP race, and hand out their own awards.
+export const BOWLS = ['Bowl I', 'Bowl II', 'Super Bowl'];
+export const BOWL_WEIGHT = { 'Bowl I': 1.5, 'Bowl II': 1.5, 'Super Bowl': 2 };
+export const gameWeight = (g) => BOWL_WEIGHT[g?.bowlName] || 1;
+// Offense: scoring, catching, throwing (same points as the MVP race). Defense: picks, pick sixes, sacks.
+export function offenseImpact(s) {
+  const P = MVP_POINTS;
+  return (s.recTD + s.rushTD) * P.td + s.rec * P.catch + s.drops * P.drop +
+    s.passTD * P.passTD + s.comp * P.comp + s.intThrown * P.intThrown + s.sacked * P.sacked;
+}
+export const defenseImpact = (s) => s.defTD * MVP_POINTS.td + s.defInt * MVP_POINTS.int + s.sacks * MVP_POINTS.sack;
+// Bowl awards for a finished Bowl: MVP is the crowd vote; Offensive and Defensive Player of the
+// Game go to the best stat line (ties: the winning team, then more TDs).
+export function bowlAwards(game, summary, mvp = null) {
+  if (!game?.bowlName || game.status !== 'final') return null;
+  const ids = [...(game.teams?.A || []), ...(game.teams?.B || [])];
+  const st = (id) => summary.stats[id] || blankStats();
+  const won = (id) => (summary.winner === 'A' || summary.winner === 'B') && (game.teams[summary.winner] || []).includes(id);
+  const best = (score) => ids.map((id) => ({ id, v: score(st(id)) })).filter((x) => x.v > 0)
+    .sort((a, b) => b.v - a.v || won(b.id) - won(a.id) || totalTDs(st(b.id)) - totalTDs(st(a.id)))[0]?.id || null;
+  return { name: game.bowlName, mvp: mvp?.winner || null, offense: best(offenseImpact), defense: best(defenseImpact) };
+}
+
 export function eventRoles(ev) {
   const t = EVENT_TYPES[ev.type];
   const out = {};
@@ -392,12 +416,24 @@ export function seasonTable(db, league, season = null) {
     }
     for (const [id, s] of Object.entries(summary.stats)) addStats(row(id), { ...s, gp: 0, w: 0, l: 0, t: 0, mvps: 0 });
     if (mvp?.winner) row(mvp.winner).mvps++;
+    // Bowls count 1.5x in the MVP race and the Super Bowl 2x: everything he earned in that game
+    // (stats, crowd MVP, the win) counts again by the extra amount.
+    const extra = gameWeight(g) - 1;
+    if (extra > 0) {
+      for (const side of ['A', 'B']) {
+        for (const id of g.teams?.[side] || []) {
+          const earned = impactOf(summary.stats[id] || blankStats()) + (mvp?.winner === id ? 10 : 0) + (summary.winner === side ? 2 : 0);
+          row(id).bowlBonus = (row(id).bowlBonus || 0) + earned * extra;
+        }
+      }
+    }
   }
   return table;
 }
 
-// MVP race score: stat impact + big bonus for crowd MVPs + a little for winning.
-export const mvpScore = (s) => impactOf(s) + s.mvps * 10 + s.w * 2;
+// MVP race score: stat impact + big bonus for crowd MVPs + a little for winning, with Bowl games
+// counting extra.
+export const mvpScore = (s) => impactOf(s) + s.mvps * 10 + s.w * 2 + (s.bowlBonus || 0);
 
 // ---------------------------------------------------------------------------
 // Team balancing

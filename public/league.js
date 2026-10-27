@@ -1,6 +1,6 @@
 // League rules: validation and every change the app can make, shared by the Node
 // server (server.js) and the Firebase backend that runs in the browser.
-import { BOX_KEYS, normalizeBoxLine, EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf } from './engine.js';
+import { BOX_KEYS, normalizeBoxLine, EVENT_TYPES, POSITIONS, ATTR_KEYS, ATTR_MIN, ATTR_MAX, computeLeague, balanceTeams, teamOf, BOWLS, sortGames } from './engine.js';
 import { buildDemo } from './demo.js';
 import { DESIGN_KEYS } from './awards.js';
 import { applyClock, CLOCK_ACTIONS } from './clock.js';
@@ -31,6 +31,9 @@ export const HFL_TEAMS = [
   { id: 'sostreville', name: 'Sostreville', color: '#36c8ff', players: ['Max', 'Henry', 'Kellen', 'Dane', 'Noah', 'Matteo'] },
 ];
 export const TEAMS_VERSION = 1;
+// One-time (settings.bowlsVersion): the next scheduled game is Bowl I. After that, league admins
+// mark Bowl games themselves (Edit game).
+export const BOWLS_VERSION = 1;
 export const seasonTeams = (db) => (db.settings.teams || []).filter((t) => t.players?.length);
 export const seasonTeamOf = (db, pid) => seasonTeams(db).find((t) => t.players.includes(pid)) || null;
 // Coach: set by league admins (team.coachId). He plays for the team he coaches.
@@ -528,6 +531,22 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
   });
 
   // --- games
+  // Mark a game as a Bowl (or clear it). Each Bowl name only goes on one game a season.
+  const setBowl = (db, g, name) => {
+    if (name && !BOWLS.includes(name)) throw bad('pick Bowl I, Bowl II or the Super Bowl');
+    for (const x of db.games) if (x !== g && name && x.bowlName === name && String(x.season) === String(g.season)) delete x.bowlName;
+    if (name) g.bowlName = name; else delete g.bowlName;
+    delete db.settings.nextBowl;
+  };
+  on('POST', '/api/setup-bowls', (db) => {
+    if ((db.settings.bowlsVersion || 0) >= BOWLS_VERSION) return { changed: false };
+    db.settings.bowlsVersion = BOWLS_VERSION;
+    if (db.games.some((g) => g.bowlName)) return { changed: true };
+    const next = sortGames(db.games.filter((g) => g.status === 'scheduled' && g.date >= localToday()))[0];
+    if (next) { setBowl(db, next, BOWLS[0]); return { changed: true, gameId: next.id, date: next.date }; }
+    db.settings.nextBowl = BOWLS[0]; // nothing scheduled yet: the next game made is Bowl I
+    return { changed: true, pending: true };
+  });
   on('POST', '/api/games', (db, b) => {
     const date = str(b.date, 10, { required: true, name: 'date' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw bad('date must look like 2026-09-28');
@@ -545,6 +564,7 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
       g.teamIds = { A: st[0].id, B: st[1].id };
       g.teamNames = { A: st[0].name, B: st[1].name };
     }
+    if (db.settings.nextBowl) setBowl(db, g, db.settings.nextBowl);
     db.games.push(g);
     return g;
   });
@@ -558,6 +578,10 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
     if ('time' in b) g.time = str(b.time, 5, { name: 'time' });
     if ('location' in b) g.location = str(b.location, 80, { name: 'location' });
     if ('season' in b) g.season = str(b.season, 20, { required: true, name: 'season' });
+    if ('bowlName' in b && (b.bowlName || null) !== (g.bowlName || null)) {
+      requireCommish(db, b, 'change which games are Bowls');
+      setBowl(db, g, b.bowlName || null);
+    }
     if (b.teamNames) {
       if ('A' in b.teamNames) g.teamNames.A = str(b.teamNames.A, 24, { required: true, name: 'team name' });
       if ('B' in b.teamNames) g.teamNames.B = str(b.teamNames.B, 24, { required: true, name: 'team name' });

@@ -106,3 +106,37 @@ test('coaches: admins set them, a coach plays for his team, one coach per team',
   assert.equal(seasonCoach(db, db.settings.teams[0]), null);
   assert.throws(() => call(structuredClone(db), 'PUT', '/api/season-teams', { teams: [{ ...teams()[0], coachId: 'nobody' }, teams()[1]], _auth: admin }), /coach/);
 });
+
+test('Bowls: the next scheduled game becomes Bowl I once; admins mark Bowls; one per name a season', () => {
+  const db = setup();
+  call(db, 'POST', '/api/setup-teams');
+  const admin = { as: 'paul', pinHash: H('a') };
+  const done = call(db, 'POST', '/api/games', { date: '2000-01-01' });
+  done.status = 'final';
+  const later = call(db, 'POST', '/api/games', { date: '2099-10-24' });
+  const next = call(db, 'POST', '/api/games', { date: '2099-10-17' });
+  const r = call(db, 'POST', '/api/setup-bowls');
+  assert.equal(r.gameId, next.id, 'the soonest upcoming game, not an old one or a later one');
+  assert.equal(next.bowlName, 'Bowl I');
+  assert.ok(!later.bowlName && !done.bowlName);
+  assert.equal(call(db, 'POST', '/api/setup-bowls').changed, false, 'one time only');
+  // only admins change Bowls; a Bowl name moves rather than duplicating
+  assert.throws(() => call(structuredClone(db), 'PATCH', `/api/games/${later.id}`, { bowlName: 'Bowl II', _auth: { as: 'ben', pinHash: H('b') } }), /locked/);
+  call(db, 'PATCH', `/api/games/${later.id}`, { bowlName: 'Bowl I', _auth: admin });
+  assert.equal(later.bowlName, 'Bowl I');
+  assert.equal(next.bowlName, undefined, 'Bowl I moved to the other game');
+  call(db, 'PATCH', `/api/games/${later.id}`, { bowlName: 'Super Bowl', _auth: admin });
+  assert.equal(later.bowlName, 'Super Bowl');
+  assert.throws(() => call(structuredClone(db), 'PATCH', `/api/games/${later.id}`, { bowlName: 'Toilet Bowl', _auth: admin }), /Bowl I, Bowl II or the Super Bowl/);
+  call(db, 'PATCH', `/api/games/${later.id}`, { location: 'The park' }); // other edits still open to everyone
+  assert.equal(later.bowlName, 'Super Bowl');
+  call(db, 'PATCH', `/api/games/${later.id}`, { bowlName: null, _auth: admin });
+  assert.equal(later.bowlName, undefined);
+
+  // nothing on the schedule yet: the next game made is Bowl I
+  const db2 = setup();
+  call(db2, 'POST', '/api/setup-teams');
+  assert.equal(call(db2, 'POST', '/api/setup-bowls').pending, true);
+  assert.equal(call(db2, 'POST', '/api/games', { date: '2099-11-01' }).bowlName, 'Bowl I');
+  assert.equal(call(db2, 'POST', '/api/games', { date: '2099-11-08' }).bowlName, undefined, 'just that one');
+});

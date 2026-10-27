@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION, TEAMS_VERSION, rsvpOpen, commissionerIds, localToday, teamCaptain, cleanPlay, seasonTeams, seasonCaptain, seasonCoach, coachOf } from './league.js';
+import { ROSTER_VERSION, TEAMS_VERSION, BOWLS_VERSION, rsvpOpen, commissionerIds, localToday, teamCaptain, cleanPlay, seasonTeams, seasonCaptain, seasonCoach, coachOf } from './league.js';
 import { TEAM_PIN, makeLock, openLock, secretsMatch, encryptJSON, decryptJSON } from './teamlock.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
@@ -10,7 +10,7 @@ import { nflComps } from './nfl.js';
 import { buildWrapped, wrappedSeasons, seasonOver, wrappedToPngBlob } from './wrapped.js';
 import { CastView } from './cast.js';
 import { clockElapsed, formatClock, quarterLabel, isRunning } from './clock.js';
-import { typicalPlays, winProbSeries, biggestSwing, clutchTable, formOf, teamScouting } from './insights.js';
+import { typicalPlays, winProbSeries, biggestSwing, clutchTable, clutchPlays, formOf, teamScouting } from './insights.js';
 
 // ---------------------------------------------------------------------------
 // State + helpers
@@ -371,6 +371,92 @@ function ensureTeams() {
     .finally(() => { ensureTeams.running = false; });
 }
 
+// One-time: the next scheduled game is Bowl I (or the next one made, if nothing's scheduled).
+function ensureBowls() {
+  if ((S.db.settings.bowlsVersion || 0) >= BOWLS_VERSION || ensureBowls.running) return;
+  ensureBowls.running = true;
+  api('POST', '/api/setup-bowls')
+    .then((r) => {
+      if (r?.gameId) toast(`🏆 Bowl I is set: the ${fmtDate(r.date, { weekday: 'long', month: 'short', day: 'numeric' })} game`);
+      else if (r?.pending) toast('🏆 The next game you schedule is Bowl I');
+    })
+    .catch(() => {})
+    .finally(() => { ensureBowls.running = false; });
+}
+
+// ---------------------------------------------------------------------------
+// Bowl games: Bowl I, Bowl II and the Super Bowl (game.bowlName, set by admins)
+
+const bowlTitle = (g) => (g?.bowlName ? `HFL ${g.bowlName}` : '');
+// Bowl awards for a finished Bowl, plus the Clutch Player of the Game (biggest clutch plays).
+function gameBowlAwards(g) {
+  const info = gameInfo(g);
+  const a = E.bowlAwards(g, info.summary, info.mvp || E.tallyMvp(g, info.summary));
+  if (!a) return null;
+  const clutch = {};
+  for (const c of clutchPlays(g)) clutch[c.id] = (clutch[c.id] || 0) + c.pts;
+  const top = Object.entries(clutch).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1])[0];
+  return { ...a, clutch: top ? top[0] : null };
+}
+const BOWL_AWARDS = [
+  ['mvp', '🏆', 'MVP', 'Crowd vote'],
+  ['offense', '🏈', 'Offensive Player of the Game', 'Best offensive stat line'],
+  ['defense', '🛡️', 'Defensive Player of the Game', 'Picks, pick sixes and sacks'],
+  ['clutch', '🧊', 'Clutch Player of the Game', 'Biggest plays in a close game, late'],
+];
+function bowlAwardsCard(g) {
+  const a = gameBowlAwards(g);
+  if (!a) return '';
+  const stats = gameInfo(g).summary.stats;
+  return `
+    <section class="bowl-awards ${g.bowlName === 'Super Bowl' ? 'super' : ''}">
+      <div class="kicker gold">🏆 ${h(bowlTitle(g))} awards</div>
+      ${BOWL_AWARDS.map(([k, icon, label, how]) => {
+        const id = a[k];
+        return `
+          <div class="ba-row">
+            <span class="ba-ic">${icon}</span>
+            <span class="grow"><small>${h(g.bowlName)} ${h(label)}</small>
+              ${id ? `<a href="#/p/${id}"><b>${h(nick(id))}</b></a><span class="muted small">${h(statLine(stats[id]))}</span>` : `<span class="muted small">${k === 'mvp' ? 'Voting is open below' : `Nobody yet (${h(how.toLowerCase())})`}</span>`}
+            </span>
+            ${id ? avatar(id) : ''}
+          </div>`;
+      }).join('')}
+    </section>`;
+}
+function bowlChampion(g) {
+  const w = gameInfo(g).summary.winner;
+  const sb = g.bowlName === 'Super Bowl';
+  return `
+    <div class="bowl-champ ${sb ? 'super' : ''}">
+      <span class="bowl-trophy">🏆</span>
+      <span class="grow"><span class="kicker gold">${h(bowlTitle(g))} · Season ${h(g.season)}</span>
+        <b>${w === 'tie' ? `${h(g.bowlName)} ends in a tie` : sb ? `${h(teamName(g, w))} are HFL champions` : `${h(teamName(g, w))} win ${h(g.bowlName).replace(' ', '&nbsp;')}`}</b>
+        <small>${sb ? 'Champions of the season' : 'Counts 1.5× in the MVP race'}</small></span>
+    </div>`;
+}
+// Who won this season's Bowls (under the standings).
+function bowlTrophies(season) {
+  const games = S.db.games.filter((g) => g.bowlName && String(g.season) === String(season));
+  if (!games.length) return '';
+  return `<div class="bowl-row">${E.BOWLS.map((name) => {
+    const g = games.find((x) => x.bowlName === name);
+    const win = g?.status === 'final' ? gameInfo(g).summary.winner : null;
+    const side = win && win !== 'tie' ? win : null;
+    return `<${g ? `a href="#/g/${g.id}"` : 'span'} class="bowl-cell ${name === 'Super Bowl' ? 'super' : ''}"><small>🏆 ${h(name)}</small>${side ? `<b style="color:${h(sideColor(g, side))}">${h(teamName(g, side))}</b>` : `<em>${win === 'tie' ? 'Tie' : g ? h(fmtDate(g.date, { month: 'short', day: 'numeric' })) : 'TBD'}</em>`}</${g ? 'a' : 'span'}>`;
+  }).join('')}</div>`;
+}
+// Every Bowl award a player has won (player page badges).
+function bowlBadges(id) {
+  const out = [];
+  for (const g of S.db.games) {
+    if (!g.bowlName || g.status !== 'final') continue;
+    const a = gameBowlAwards(g);
+    for (const [k, icon, label] of BOWL_AWARDS) if (a?.[k] === id) out.push(`${icon} ${g.season} ${g.bowlName} ${k === 'mvp' ? 'MVP' : label.replace(' of the Game', '')}`);
+  }
+  return out;
+}
+
 // Season standings card (when the league has season teams).
 function standingsCard(season = S.db.settings.season, { compact = false } = {}) {
   const teams = seasonTeams(S.db);
@@ -384,6 +470,7 @@ function standingsCard(season = S.db.settings.season, { compact = false } = {}) 
         ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { if (compact) return ''; const c = seasonCaptain(S.db, t(r.id), S.league); const co = seasonCoach(S.db, t(r.id)); const parts = co && co === c ? [`Coach & captain ${h(firstName(co))}`] : [co && `Coach ${h(firstName(co))}`, c && `Captain ${h(nick(c))}`].filter(Boolean); return parts.length ? `<div class="muted small st-cap">${parts.join(' · ')}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
       </tbody></table>
       ${rows.every((r) => !r.gp) ? '<p class="muted small">No games finished yet this season.</p>' : ''}
+      ${bowlTrophies(season)}
     </section>`;
 }
 
@@ -476,7 +563,8 @@ function matchupHero(g) {
   const days = Math.round((Date.parse(`${g.date}T00:00`) - Date.parse(`${localToday()}T00:00`)) / 864e5);
   const when = days <= 0 ? 'Game day' : days === 1 ? 'Tomorrow' : `In ${days} days`;
   return `
-    <div class="mu" style="--ca:${h(sideColor(g, 'A'))};--cb:${h(sideColor(g, 'B'))}">
+    <div class="mu ${g.bowlName ? 'mu-is-bowl' : ''}" style="--ca:${h(sideColor(g, 'A'))};--cb:${h(sideColor(g, 'B'))}">
+      ${g.bowlName ? `<div class="mu-bowl ${g.bowlName === 'Super Bowl' ? 'super' : ''}">🏆 The ${h(bowlTitle(g))}</div>` : ''}
       ${side('A')}
       <div class="mu-vs"><span><b>VS</b></span></div>
       ${side('B')}
@@ -759,7 +847,7 @@ function gamePanel(g) {
     <div class="game-head">
       ${ticket(g.date)}
       <div class="gh-main">
-        <div class="kicker">${g.status === 'scheduled' ? 'Next game' : g.status === 'live' ? 'Game on' : 'Final'}</div>
+        <div class="kicker ${g.bowlName ? 'gold' : ''}">${g.bowlName ? `🏆 ${h(bowlTitle(g))} · ` : ''}${g.status === 'scheduled' ? 'Next game' : g.status === 'live' ? 'Game on' : 'Final'}</div>
         <h2 class="gh-title">${h(fmtDate(g.date, { weekday: 'long' }))}${g.time ? ` <span class="gh-time">${h(fmtTime(g.time))}</span>` : ''}</h2>
         <div class="gh-loc">${PIN}${h(g.location || 'Location TBD')}</div>
       </div>
@@ -1311,7 +1399,9 @@ function boxScore(g, info) {
 function finalSection(g) {
   const info = gameInfo(g);
   return `
+    ${g.bowlName ? bowlChampion(g) : ''}
     ${scoreboard(g)}
+    ${g.bowlName ? bowlAwardsCard(g) : ''}
     ${momentumChart(g)}
     ${recapCard(g)}
     ${mvpBlock(g)}
@@ -1340,7 +1430,7 @@ function mvpBlock(g) {
   return `
     <div class="mvp">
       <div class="mvp-head">
-        <div><div class="kicker gold">MVP of the day</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
+        <div><div class="kicker gold">${g.bowlName ? `${h(g.bowlName)} MVP` : 'MVP of the day'}</div><h3 class="mvp-name">${tally.winner ? h(nick(tally.winner)) : 'Voting open'}</h3></div>
         ${tally.winner ? `<span class="crown">${avatar(tally.winner, 'lg')}</span>` : ''}
       </div>
       ${tally.ranked.length ? tally.ranked.slice(0, 5).map((r) => `
@@ -1370,6 +1460,12 @@ function gameAdmin(g) {
           <label>Team 2 <input name="teamB" maxlength="24" value="${h(teamName(g, 'B'))}"></label>
         </div>
         <label>Season <input name="season" maxlength="20" value="${h(g.season)}"></label>
+        ${iAmCommish() ? `<label>Bowl game
+          <select name="bowlName">
+            <option value="">Regular game</option>
+            ${E.BOWLS.map((b) => `<option ${g.bowlName === b ? 'selected' : ''}>${b}</option>`).join('')}
+          </select>
+        </label>` : g.bowlName ? `<p class="muted small">🏆 ${h(bowlTitle(g))}. League admins pick the Bowl games.</p>` : ''}
         <button class="btn">Save changes</button>
       </form>
       ${g.status === 'final' ? `<button class="btn ghost block" data-a="reopen" data-g="${g.id}">↩ Reopen game to fix stats</button>` : ''}
@@ -1386,6 +1482,7 @@ function viewNewGame() {
     <a class="back" href="#/">‹ Games</a>
     <section class="card">
       <h2>Schedule a game</h2>
+      ${S.db.settings.nextBowl ? `<p class="fa-week bowl">🏆 This game will be <b>HFL ${h(S.db.settings.nextBowl)}</b>.</p>` : ''}
       <form data-f="game" class="form">
         <div class="form-row">
           <label>Date <input type="date" name="date" value="${sat}" required></label>
@@ -1419,7 +1516,7 @@ function viewStats() {
   if (tab === 'mvp') {
     list = rows.filter((r) => r.s.gp).sort((a, b) => E.mvpScore(b.s) - E.mvpScore(a.s));
     cols = [['Pts', (s) => Math.round(E.mvpScore(s))], ['👑', (s) => s.mvps], ['Rec', record], ['TD', E.totalTDs]];
-    note = 'MVP points: TD catch 7, TD run 6, pick six 11, INT 5, sack 3, catch 1, drop −2. QB stats count half because he’s on every play: TD pass 2, completion ¼, pick thrown −2. Plus 10 per crowd MVP and 2 per win.';
+    note = 'MVP points: TD catch 7, TD run 6, pick six 11, INT 5, sack 3, catch 1, drop −2. QB stats count half because he’s on every play: TD pass 2, completion ¼, pick thrown −2. Plus 10 per crowd MVP and 2 per win. Bowl games count 1.5×, the Super Bowl 2×.';
   } else if (tab === 'tds') {
     list = rows.filter((r) => E.totalTDs(r.s) || r.s.passTD).sort((a, b) => E.totalTDs(b.s) - E.totalTDs(a.s) || b.s.passTD - a.s.passTD);
     cols = [['TD', E.totalTDs], ['Rec', (s) => s.recTD], ['Rush', (s) => s.rushTD], ['Def', (s) => s.defTD], ['Pass', (s) => s.passTD]];
@@ -1517,6 +1614,7 @@ function badges(id) {
   const out = [];
   const coaching = coachOf(S.db, id);
   if (coaching) out.push(`📋 ${coaching.name} Coach`);
+  out.push(...bowlBadges(id));
   if (c.mvps) out.push(`👑 ${c.mvps}× MVP`);
   if (S.db.fame.some((f) => f.category === 'best' && f.playerIds.includes(id))) out.push('🏛️ Hall of Famer');
   if (streak >= 3) out.push(`🏆 ${streak}-game win streak`);
@@ -1888,10 +1986,21 @@ function viewAwards() {
     <section class="card">
       <h3>Season awards</h3>
       <p class="muted small">${s?.done ? 'Final. These are locked in.' : 'Handed out when the season ends (change the season name in Settings to start a new one). Here\'s who\'s leading.'}</p>
-      ${award(s?.mvp, '👑', 'MVP', 'Most MVP points: stats, crowd MVPs and wins.')}
+      ${award(s?.mvp, '👑', 'MVP', 'Most MVP points: stats, crowd MVPs and wins. Bowls count 1.5×, the Super Bowl 2×.')}
       ${award(s?.improved, '📈', 'Most Improved', 'Biggest OVR gain from games this season (2+ games).')}
       ${award(s?.butter, '🧈', 'Butterfingers', 'Most drops. Nobody wants this one.')}
     </section>
+    ${(() => {
+      const bowls = S.db.games.filter((g) => g.bowlName && g.status === 'final' && String(g.season) === String(season))
+        .sort((x, y) => E.BOWLS.indexOf(x.bowlName) - E.BOWLS.indexOf(y.bowlName));
+      const upcoming = S.db.games.filter((g) => g.bowlName && g.status !== 'final' && String(g.season) === String(season));
+      if (!bowls.length && !upcoming.length) return '';
+      return `<section class="card">
+        <h3>Bowl awards</h3>
+        <p class="muted small">Every Bowl hands out its own MVP (crowd vote), Offensive and Defensive Player of the Game, and Clutch Player of the Game. ${upcoming.map((g) => `${h(g.bowlName)}: ${h(fmtDate(g.date, { weekday: 'short', month: 'short', day: 'numeric' }))}.`).join(' ')}</p>
+        ${bowls.map((g) => bowlAwardsCard(g)).join('')}
+      </section>`;
+    })()}
     <section class="card">
       <h3>Player of the Week</h3>
       <p class="muted small">Biggest stat impact across each week's games (weeks start Monday).</p>
@@ -3169,6 +3278,7 @@ const FORMS = {
   },
   'game-edit': (d, form) => run(() => api('PATCH', `/api/games/${form.dataset.g}`, {
     date: d.date, time: d.time, location: d.location, season: d.season, teamNames: { A: d.teamA, B: d.teamB },
+    ...('bowlName' in d ? { bowlName: d.bowlName || null } : {}),
   }), 'Game updated'),
   post: async (d, form) => {
     if (!needMe()) return;
@@ -3284,6 +3394,7 @@ async function bootFirebase() {
     render();
     ensureRoster();
     ensureTeams();
+    ensureBowls();
     undoEarlyStarts();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach Firebase', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
@@ -3309,6 +3420,7 @@ async function boot() {
     render();
     ensureRoster();
     ensureTeams();
+    ensureBowls();
     undoEarlyStarts();
   } catch (e) {
     $('#view').innerHTML = `<section class="card">${empty({ art: 'whistle', title: 'Can\'t reach the HFL server', text: h(e.message), cta: '<button class="btn hot" onclick="location.reload()">Try again</button>' })}</section>`;
