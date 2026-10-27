@@ -1408,3 +1408,6 @@ body.casting .top, body.casting .tabs { display: none !important; }
 .late-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
 .late-row:first-of-type { border-top: 0; }
 .late-row b { font-size: 15px; min-width: 8ch; }
+
+/* season team coach */
+.st-coach { font: 700 12px/1 var(--label); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }

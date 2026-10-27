@@ -33,6 +33,9 @@ export const HFL_TEAMS = [
 export const TEAMS_VERSION = 1;
 export const seasonTeams = (db) => (db.settings.teams || []).filter((t) => t.players?.length);
 export const seasonTeamOf = (db, pid) => seasonTeams(db).find((t) => t.players.includes(pid)) || null;
+// Coach: set by league admins (team.coachId). He plays for the team he coaches.
+export const seasonCoach = (db, team) => (team?.coachId && db.players.some((p) => p.id === team.coachId && p.active !== false) ? team.coachId : null);
+export const coachOf = (db, pid) => seasonTeams(db).find((t) => seasonCoach(db, t) === pid) || null;
 // Captain: the highest-rated player on the team (ties: alphabetical).
 export function seasonCaptain(db, team, league = computeLeague(db)) {
   const name = (id) => db.players.find((p) => p.id === id)?.name || '';
@@ -362,8 +365,21 @@ export function buildRoutes({ imageUrl = (file) => `/uploads/${file}` } = {}) {
         seen.add(pid);
         return pid;
       });
-      return { ...(prev.get(id) || {}), id, name: str(t.name, 24, { required: true, name: 'team name' }), color: color(t.color, i ? '#36c8ff' : '#ff5a1f'), season: db.settings.season, players };
+      const team = { ...(prev.get(id) || {}), id, name: str(t.name, 24, { required: true, name: 'team name' }), color: color(t.color, i ? '#36c8ff' : '#ff5a1f'), season: db.settings.season, players };
+      if ('coachId' in t) {
+        if (t.coachId) team.coachId = player(db, t.coachId, 'coach').id;
+        else delete team.coachId;
+      }
+      return team;
     });
+    const [c0, c1] = db.settings.teams.map((t) => t.coachId);
+    if (c0 && c0 === c1) throw bad('one coach per team: pick someone else for the other team');
+    // a coach plays for the team he coaches
+    for (const t of db.settings.teams) {
+      if (!t.coachId || t.players.includes(t.coachId)) continue;
+      for (const other of db.settings.teams) other.players = other.players.filter((pid) => pid !== t.coachId);
+      t.players.push(t.coachId);
+    }
     // games that haven't started follow the new teams
     for (const g of db.games) {
       if (g.status !== 'scheduled' || !g.teamIds) continue;

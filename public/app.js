@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { ROSTER_VERSION, TEAMS_VERSION, rsvpOpen, commissionerIds, localToday, teamCaptain, cleanPlay, seasonTeams, seasonCaptain } from './league.js';
+import { ROSTER_VERSION, TEAMS_VERSION, rsvpOpen, commissionerIds, localToday, teamCaptain, cleanPlay, seasonTeams, seasonCaptain, seasonCoach, coachOf } from './league.js';
 import { TEAM_PIN, makeLock, openLock, secretsMatch, encryptJSON, decryptJSON } from './teamlock.js';
 import { PlayEditor, playSVG, newPlay, playToPngBlob } from './playbook.js';
 import { computeAwards, DESIGNS, cardDesign } from './awards.js';
@@ -46,6 +46,8 @@ const allPlayers = () => S.db.players;
 const activePlayers = () => S.db.players.filter((p) => p.active !== false).sort((a, b) => a.name.localeCompare(b.name));
 const P = (id) => S.db.players.find((p) => p.id === id) || { id, name: 'Unknown', nickname: '', emoji: '❔', color: '#555555', position: 'ATH' };
 const nick = (id) => { const p = P(id); return p.nickname || p.name.split(' ')[0]; };
+// "Coach Logan", not "Coach The Giffinland Coach"
+const firstName = (id) => P(id).name.split(' ')[0];
 const ovr = (id) => S.league.ovr[id] ?? E.eloToOvr(E.ovrToElo(P(id).startOvr));
 // ---- identity + PINs -----------------------------------------------------
 // A player's PIN is stored (and checked) as sha256("hfl|<id>|<PIN>"). This phone remembers
@@ -379,7 +381,7 @@ function standingsCard(season = S.db.settings.season, { compact = false } = {}) 
     <section class="card standings">
       <div class="row-between"><h3>Standings</h3><span class="muted small">Season ${h(season)}</span></div>
       <table class="st-table"><thead><tr><th class="l">Team</th><th>W</th><th>L</th>${compact ? '' : '<th>T</th><th>PF</th><th>PA</th>'}<th>Diff</th></tr></thead><tbody>
-        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { const c = seasonCaptain(S.db, t(r.id), S.league); return c && !compact ? `<div class="muted small st-cap">Captain ${h(nick(c))}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
+        ${rows.map((r, i) => `<tr><td class="l"><span class="st-dot" style="background:${h(t(r.id).color || (i ? '#36c8ff' : '#ff5a1f'))}"></span><b>${h(t(r.id).name)}</b>${(() => { if (compact) return ''; const c = seasonCaptain(S.db, t(r.id), S.league); const co = seasonCoach(S.db, t(r.id)); const parts = [co && `Coach ${h(firstName(co))}`, c && `Captain ${h(nick(c))}`].filter(Boolean); return parts.length ? `<div class="muted small st-cap">${parts.join(' · ')}</div>` : ''; })()}</td><td>${r.w}</td><td>${r.l}</td>${compact ? '' : `<td>${r.t}</td><td>${r.pf}</td><td>${r.pa}</td>`}<td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}
       </tbody></table>
       ${rows.every((r) => !r.gp) ? '<p class="muted small">No games finished yet this season.</p>' : ''}
     </section>`;
@@ -463,11 +465,12 @@ function matchupHero(g) {
     const ids = g.teams[k].length ? g.teams[k] : (t?.players || []);
     const avg = ids.length ? Math.round(ids.reduce((a, id) => a + ovr(id), 0) / ids.length) : null;
     const cap = t ? seasonCaptain(S.db, t, S.league) : null;
+    const coach = t ? seasonCoach(S.db, t) : null;
     return `
       <div class="mu-side mu-${k}">
         <span class="mu-rec">${r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '&nbsp;'}</span>
         <b class="mu-name" style="--len:${Math.max(6, teamName(g, 'A').length, teamName(g, 'B').length)}">${h(teamName(g, k))}</b>
-        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}</span>
+        <span class="mu-meta">${avg !== null ? `<span>OVR <b>${avg}</b></span>` : ''}${coach ? `<span>Coach <b>${h(firstName(coach))}</b></span>` : ''}${cap ? `<span>Capt. <b>${h(nick(cap))}</b></span>` : ''}</span>
       </div>`;
   };
   const days = Math.round((Date.parse(`${g.date}T00:00`) - Date.parse(`${localToday()}T00:00`)) / 864e5);
@@ -1512,6 +1515,8 @@ function badges(id) {
   let streak = 0;
   for (const x of log) { if (x.res === 'W') streak++; else break; }
   const out = [];
+  const coaching = coachOf(S.db, id);
+  if (coaching) out.push(`📋 ${coaching.name} Coach`);
   if (c.mvps) out.push(`👑 ${c.mvps}× MVP`);
   if (S.db.fame.some((f) => f.category === 'best' && f.playerIds.includes(id))) out.push('🏛️ Hall of Famer');
   if (streak >= 3) out.push(`🏆 ${streak}-game win streak`);
@@ -2569,8 +2574,8 @@ function seasonTeamsSettings() {
     return `
       <section class="card">
         <h3>Season teams</h3>
-        ${teams.map((t) => `<div class="st-roster"><b style="color:${h(t.color)}">${h(t.name)}</b><span>${t.players.map((pid) => h(nick(pid))).join(', ')}</span></div>`).join('')}
-        <p class="muted small">League admins can change the teams here.</p>
+        ${teams.map((t) => `<div class="st-roster"><b style="color:${h(t.color)}">${h(t.name)}</b>${seasonCoach(S.db, t) ? `<span class="st-coach">📋 Coach ${h(firstName(seasonCoach(S.db, t)))}</span>` : ''}<span>${t.players.map((pid) => h(nick(pid))).join(', ')}</span></div>`).join('')}
+        <p class="muted small">League admins set the teams and coaches here.</p>
       </section>`;
   }
   return `
@@ -2581,6 +2586,14 @@ function seasonTeamsSettings() {
           <label>Team ${i + 1} <input name="name${i}" maxlength="24" required value="${h(t.name)}"></label>
           <label class="color-label">Color <input name="color${i}" type="color" value="${h(t.color || (i ? '#36c8ff' : '#ff5a1f'))}"></label>`).join('')}
         </div>
+        <div class="form-row">${teams.map((t, i) => `
+          <label>${h(t.name)} coach
+            <select name="coach${i}">
+              <option value="">No coach</option>
+              ${activePlayers().map((p) => `<option value="${p.id}" ${seasonCoach(S.db, t) === p.id ? 'selected' : ''}>${h(p.name)}</option>`).join('')}
+            </select>
+          </label>`).join('')}
+        </div>
         <div class="st-assign">${activePlayers().map((p) => `
           <label class="st-row">${avatar(p.id, 'xs')}<span class="grow">${h(p.name)}</span>
             <select name="team.${p.id}">
@@ -2589,7 +2602,7 @@ function seasonTeamsSettings() {
             </select>
           </label>`).join('')}
         </div>
-        <p class="muted small">Games that haven't started follow the new teams right away; finished games keep who actually played. Free agents can be added to either side on game day.</p>
+        <p class="muted small">A coach plays for the team he coaches (picking him moves him there). Games that haven't started follow the new teams right away; finished games keep who actually played. Free agents can be added to either side on game day.</p>
         <button class="btn hot block">Save teams</button>
       </form>
     </section>`;
@@ -3022,7 +3035,8 @@ const FORMS = {
     location.hash = P(id).nickname ? '#/' : '#/nickname';
   },
   'season-teams': (d) => {
-    const teams = seasonTeams(S.db).map((t, i) => ({ id: t.id, name: d[`name${i}`], color: d[`color${i}`], players: [] }));
+    const teams = seasonTeams(S.db).map((t, i) => ({ id: t.id, name: d[`name${i}`], color: d[`color${i}`], coachId: d[`coach${i}`] || null, players: [] }));
+    if (teams[0].coachId && teams[0].coachId === teams[1].coachId) return toast('One coach per team: pick someone else for the other team', true);
     for (const [k, v] of Object.entries(d)) if (k.startsWith('team.') && v !== '-1') teams[Number(v)]?.players.push(k.slice(5));
     run(() => api('PUT', '/api/season-teams', { teams }), '🏈 Season teams saved');
   },
